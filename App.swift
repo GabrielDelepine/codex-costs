@@ -118,7 +118,7 @@ import Observation
     var body: some Scene {
         WindowGroup {
             MainView(store: store)
-                .environment(\.locale, Locale(identifier: "en_US"))
+                .environment(\.locale, Locale.autoupdatingCurrent)
                 .frame(minWidth: 1020, minHeight: 520)
                 .task { await store.run() }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.wake() }
@@ -203,7 +203,7 @@ struct MainView: View {
                 HStack {
                     Link(destination: URL(string: "https://tools.pwa.ovh/openai-pricing")!) {
                         if let date = store.catalog.flatMap({ parseDate($0.fetchedAt) }) {
-                            Text("Prices retrieved \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute().second().locale(Locale(identifier: "en_US")))) (via tools.pwa.ovh) ↗")
+                            Text("Prices retrieved \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute().second().locale(Locale.autoupdatingCurrent))) (via tools.pwa.ovh) ↗")
                         } else { Text("No prices available (via tools.pwa.ovh) ↗") }
                     }
                     Spacer()
@@ -261,7 +261,7 @@ struct DetailView: View {
         }.frame(width: 660, height: 650)
     }
     func row(_ title: String, _ value: Int64) -> some View {
-        GridRow { Text(title); Text(value.formatted(.number.locale(Locale(identifier: "en_US")))).monospacedDigit() }
+        GridRow { Text(title); Text(value.formatted(.number.locale(Locale.autoupdatingCurrent))).monospacedDigit() }
     }
     func priceBlock(_ title: String, _ rates: Rates) -> some View {
         let labels = ["Input", "Cached input", "Output", "Cache write · 30 min", "Cache write · 12 h"]
@@ -271,7 +271,7 @@ struct DetailView: View {
             ForEach(labels.indices, id: \.self) { i in
                 HStack {
                     Text(labels[i]); Spacer()
-                    Text(prices[i].map { NSDecimalNumber(decimal: $0.priceInMicrodollars / $0.microdollarsPerDollar).stringValue + " USD / 1 M tokens" } ?? "Unknown")
+                    Text(prices[i].map { ($0.priceInMicrodollars / $0.microdollarsPerDollar).formatted(.number.locale(.autoupdatingCurrent)) + " USD / 1 M tokens" } ?? "Unknown")
                 }
             }
         }.font(.caption).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
