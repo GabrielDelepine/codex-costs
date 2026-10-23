@@ -41,7 +41,7 @@ func parseDate(_ value: String) -> Date? {
     return f.date(from: value) ?? ISO8601DateFormatter().date(from: value)
 }
 let tokenKeys = ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]
-struct Usage: Equatable {
+struct Usage: Equatable, Codable {
     var input: Int64 = 0, cache: Int64 = 0, write: Int64 = 0, output: Int64 = 0, reasoning: Int64 = 0
     init() {}
     init(_ object: [String: Any]) {
@@ -56,15 +56,16 @@ struct Usage: Equatable {
         var u = Usage(); u.input = a.input-b.input; u.cache = a.cache-b.cache; u.write = a.write-b.write; u.output = a.output-b.output; u.reasoning = a.reasoning-b.reasoning; return u
     }
 }
-struct Call { let model: String?; let usage: Usage }
-struct Session: Identifiable {
+struct Call: Codable, Equatable { let model: String?; let usage: Usage }
+struct Session: Identifiable, Codable, Equatable {
     let id: String, file: URL, date: Date, title: String, models: [String], calls: [Call], usage: Usage, issues: [String]
     var guardianSource = false
+    var sourceAvailable = true
     var isGuardianReview: Bool {
         guardianSource || models.contains("codex-auto-review") || title.caseInsensitiveCompare("Guardian review") == .orderedSame
     }
     func titled(_ newTitle: String) -> Session {
-        Session(id: id, file: file, date: date, title: newTitle, models: models, calls: calls, usage: usage, issues: issues, guardianSource: guardianSource)
+        Session(id: id, file: file, date: date, title: newTitle, models: models, calls: calls, usage: usage, issues: issues, guardianSource: guardianSource, sourceAvailable: sourceAvailable)
     }
     var codexURL: URL? {
         guard !isGuardianReview else { return nil }
@@ -102,6 +103,19 @@ struct Session: Identifiable {
         } catch { return .unavailable(error.localizedDescription) }
     }
 }
+// Optional metadata fields allow existing local snapshots to survive schema additions.
+extension Session {
+    enum CodingKeys: String, CodingKey { case id, file, date, title, models, calls, usage, issues, guardianSource, sourceAvailable }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); file = try c.decode(URL.self, forKey: .file)
+        date = try c.decode(Date.self, forKey: .date); title = try c.decode(String.self, forKey: .title)
+        models = try c.decode([String].self, forKey: .models); calls = try c.decode([Call].self, forKey: .calls)
+        usage = try c.decode(Usage.self, forKey: .usage); issues = try c.decode([String].self, forKey: .issues)
+        guardianSource = try c.decodeIfPresent(Bool.self, forKey: .guardianSource) ?? false
+        sourceAvailable = try c.decodeIfPresent(Bool.self, forKey: .sourceAvailable) ?? false
+    }
+}
 struct Estimate {
     let cost: Decimal?, reason: String?, context: String
     static func unavailable(_ reason: String) -> Estimate { Estimate(cost: nil, reason: reason, context: "") }
@@ -116,6 +130,7 @@ struct ScanResult {
     let errors: [String]
     let changed: Bool
     let filesRead: Int
+    let excludedIDs: Set<String>
 }
 enum Logs {
     static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
@@ -236,6 +251,7 @@ actor SessionCache {
     private var lastErrors: [String] = []
     private var dayDirectories: [URL: (stamp: Stamp, files: [URL])] = [:]
     private var guardianHeaders: [URL: (stamp: Stamp, guardian: Bool)] = [:]
+    private var discoveryErrors: [String] = []
     private var archiveStamp: Stamp?
     private var archiveFiles: [URL] = []
     init(root: URL = Logs.root) { self.root = root.resolvingSymlinksInPath() }
@@ -263,10 +279,15 @@ actor SessionCache {
     }
     func conversationDays() -> Set<Date> {
         let fm = FileManager.default
+        discoveryErrors = []
         func directories(_ url: URL) -> [URL] {
-            ((try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []).filter {
-                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-                && Int($0.lastPathComponent) != nil
+            do {
+                return try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey]).filter {
+                    (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true && Int($0.lastPathComponent) != nil
+                }
+            } catch {
+                if fm.fileExists(atPath: url.path) { discoveryErrors.append("Cannot discover all session directories") }
+                return []
             }
         }
         let format = DateFormatter(); format.locale = Locale(identifier: "en_US_POSIX"); format.dateFormat = "yyyy/MM/dd"
@@ -276,9 +297,11 @@ actor SessionCache {
             for month in directories(year) {
                 for day in directories(month) {
                     seen.insert(day)
-                    guard let stamp = try? Stamp(day) else { continue }
+                    guard let stamp = try? Stamp(day) else { discoveryErrors.append("Cannot inspect a session directory"); continue }
                     if dayDirectories[day]?.stamp != stamp {
-                        let names = (try? fm.contentsOfDirectory(atPath: day.path)) ?? []
+                        guard let names = try? fm.contentsOfDirectory(atPath: day.path) else {
+                            discoveryErrors.append("Cannot list a session day"); continue
+                        }
                         let files = names.filter { $0.hasPrefix("rollout-") && $0.hasSuffix(".jsonl") }.map { day.appendingPathComponent($0) }
                         dayDirectories[day] = (stamp, files)
                     }
@@ -306,7 +329,7 @@ actor SessionCache {
     }
     func scan(folders: [URL]) -> ScanResult {
         let fm = FileManager.default
-        var changed = folders != lastFolders, reads = 0, errors: [String] = []
+        var changed = folders != lastFolders, reads = 0, errors = discoveryErrors
         lastFolders = folders
         let index = root.appendingPathComponent("session_index.jsonl")
         if fm.fileExists(atPath: index.path) {
@@ -368,6 +391,7 @@ actor SessionCache {
         changed = changed || errors != lastErrors
         lastErrors = errors
         var sessions: [Session] = [], seenIDs = Set<String>()
+        var excludedIDs = Set(titles.compactMap { $0.value.caseInsensitiveCompare("Guardian review") == .orderedSame ? $0.key : nil })
         let ordered = entries.values.sorted {
             let a = $0.session.file.path, b = $1.session.file.path
             let aArchived = $0.session.file.deletingLastPathComponent().lastPathComponent == "archived_sessions"
@@ -378,12 +402,13 @@ actor SessionCache {
         for entry in ordered where seenIDs.insert(entry.session.id).inserted {
             let title = titles[entry.session.id] ?? "Untitled"
             let session = entry.session.titled(title)
-            if !session.isGuardianReview { sessions.append(session) }
+            if session.isGuardianReview { excludedIDs.insert(session.id) }
+            else { sessions.append(session) }
         }
         sessions.sort { a, b in
             if a.date == b.date { return a.id < b.id }
             return a.date < b.date
         }
-        return ScanResult(sessions: sessions, errors: errors, changed: changed, filesRead: reads)
+        return ScanResult(sessions: sessions, errors: errors, changed: changed, filesRead: reads, excludedIDs: excludedIDs)
     }
 }

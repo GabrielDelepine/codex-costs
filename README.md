@@ -168,9 +168,11 @@ Guardian Review sessions are excluded from the table, counts, totals and calenda
 
 There are reports of potentially missing conversations and different amounts of local history between machines. One confirmed coverage gap was archived rollout files: these are now scanned as well as active sessions. This does not establish the cause of every missing conversation or differences between machines; automatic deletion by Codex should not be assumed without evidence.
 
-Codex Costs currently keeps parsed usage in memory, not in a permanent conversation archive. If a source file disappears, its row is removed on a subsequent check. Running the app does not currently preserve a complete history after those files are gone.
+Codex Costs retains observed conversation metadata and token counters locally, including sessions outside the selected date range. A source that disappears or cannot be read leaves a retained snapshot marked **Source not readable at the latest check** in details. Estimates are recalculated with current prices; stored counters are replaced by conversation ID, never added across observations.
 
-A future local history feature would also need to explain gaps: conversations created and removed while the app was closed might never have been observed.
+**History details** lists observation periods and provides **Clear retained history**. Clearing forgets saved snapshots and periods; readable source logs are observed again. Codex logs are never changed. A restart or gap longer than two minutes starts a new observation period. These checkpoints do not prove complete coverage: sessions created and removed between checks or while the app was closed may never be captured. Directory/read errors can also leave gaps.
+
+The archive contains IDs, titles, source paths, creation dates, model names, parsed counters, validated requests and parser warnings; it does not copy prompts, messages or raw logs. An unreadable or unsupported archive is preserved and reported rather than overwritten. Save failures are reported; until saving succeeds, new observations exist only in memory.
 
 ### Investigating differences in local history
 
@@ -202,7 +204,8 @@ Codex Costs reads session logs and the title index without changing them. It doe
 | Data                                      | Location                                                | Persistence                             |
 | ----------------------------------------- | ------------------------------------------------------- | --------------------------------------- |
 | Codex session logs and titles             | Default `~/.codex` directories                          | Managed by Codex; read-only to this app |
-| Parsed session counters and file metadata | App memory                                              | No permanent conversation archive       |
+| Parsed session counters and file metadata | App memory                                              | Cache of currently readable source files |
+| Observed metadata, counters and observation periods | `~/Library/Application Support/CodexCosts/history.json` | Retained locally until cleared |
 | Last valid pricing catalogue              | `~/Library/Application Support/CodexCosts/pricing.json` | Saved locally                           |
 | Last successful pricing download time     | macOS user defaults                                     | Saved locally                           |
 
@@ -214,11 +217,11 @@ There is no app account, API key, analytics service or local backend. The normal
 
 Native **FSEvents** notifications watch the `.codex` tree and filter for active session, archived session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
 
-The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted files are removed, and title-index changes update titles without rereading unchanged session contents.
+The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted source files leave the parsing cache while observed snapshots are retained, and title-index changes update titles without rereading unchanged session contents.
 
-Calendar availability uses cached directory listings and bounded session headers to exclude internal Guardian Reviews. Usage counters outside the selected range are not parsed. Header classification is cached by file metadata and title-index changes are applied without rereading unchanged logs.
+Calendar availability uses cached directory listings and bounded session headers to exclude internal Guardian Reviews. The log cache itself can limit usage parsing to selected folders; history observation supplies all available and previously observed dates independently of the displayed range. Header classification is cached by file metadata and title-index changes are applied without rereading unchanged logs.
 
-A recovery check runs every 60 seconds, on app activation and after waking the Mac. It covers missed events, missing day folders and midnight changes, and remains available when native watching cannot start. File parsing runs away from the UI thread, and pricing downloads are scheduled independently of log updates.
+A recovery check runs every 60 seconds, on app activation and after waking the Mac. It covers missed events, missing day folders and midnight changes, and remains available when native watching cannot start. File parsing and history persistence run away from the UI thread. Source discovery and observation cover all available dates independently of the displayed range; unchanged logs remain cached. Pricing downloads are scheduled independently of log updates.
 
 ## Build from source
 
@@ -242,6 +245,7 @@ Release packaging is separate from this local build command. A universal release
 | -------------------- | ---------------------------------------------------------------------------- |
 | `App.swift`          | Interface, app state, pricing downloads and refresh scheduling               |
 | `Core.swift`         | Log parsing, per-file cache, date ranges and cost calculation                |
+| `History.swift`      | Local observed snapshots, observation periods and atomic persistence          |
 | `Native.swift`       | Calendar with per-day availability and native filesystem notifications       |
 | `Assets/AppIcon.png` | Selected Code icon, generated with OpenAI ImageGen                           |
 | `build.sh`           | Compilation, icon generation, bundle creation and local signing              |
