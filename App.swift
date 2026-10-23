@@ -211,6 +211,7 @@ struct MainView: View {
                 }
                 Text("Estimate convention: total input per request, including cached tokens, determines the context tier; selected rates apply to the entire request. These rules remain unverified by the endpoint.").foregroundStyle(.secondary)
                 Text("Excludes tools, subagents and surcharges. Total excludes unavailable estimates. Logs stay on your Mac.").foregroundStyle(.secondary)
+                Text("Coverage: local Codex session files only. Work conversations are not covered. A missing conversation does not mean zero usage.").foregroundStyle(.secondary)
                 if !store.networkStatus.isEmpty { Text(store.networkStatus).foregroundStyle(.orange) }
                 if !store.logStatus.isEmpty { Text(store.logStatus).foregroundStyle(.orange).textSelection(.enabled) }
             }.font(.caption).padding(14)
