@@ -318,10 +318,15 @@ struct DetailView: View {
                     }
                 }
                 Divider()
-                if session.models.count == 1, let model = catalog?.pricing["standard"]?[session.models[0]] {
-                    if let rates = model.unspecifiedContext { priceBlock("Published Standard rates", rates) }
-                    if let rates = model.shortContext { priceBlock("Short context (≤ \(model.contextSelection.inputTokenThreshold ?? 0) input tokens)", rates) }
-                    if let rates = model.longContext { priceBlock("Long context", rates) }
+                let breakdowns = session.pricingBreakdowns(catalog)
+                if breakdowns.isEmpty {
+                    Text("No pricing applied: no request estimate is available.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    if estimate.cost == nil {
+                        Text("Pricing below applies only to available request estimates; the conversation estimate is unavailable.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(breakdowns, id: \.id) { applied in AppliedPricingView(applied: applied) }
                 }
                 Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
                 Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
@@ -332,19 +337,7 @@ struct DetailView: View {
     func row(_ title: String, _ value: Int64) -> some View {
         GridRow { Text(title); Text(value.formatted(.number.locale(Locale.autoupdatingCurrent))).monospacedDigit() }
     }
-    func priceBlock(_ title: String, _ rates: Rates) -> some View {
-        let labels = ["Input", "Cached input", "Output", "Cache write · 30 min", "Cache write · 12 h"]
-        let prices = [rates.input, rates.cachedInput, rates.output, rates.cacheWriteWith30MinuteRetention, rates.cacheWriteWith12HourRetention]
-        return VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.headline)
-            ForEach(labels.indices, id: \.self) { i in
-                HStack {
-                    Text(labels[i]); Spacer()
-                    Text(prices[i].map { ($0.priceInMicrodollars / $0.microdollarsPerDollar).formatted(.number.locale(.autoupdatingCurrent)) + " USD / 1 M tokens" } ?? "Unknown")
-                }
-            }
-        }.font(.caption).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-    }
+
 }
 struct RequestDetails: View {
     let number: Int
@@ -365,11 +358,37 @@ struct RequestDetails: View {
                 }.monospacedDigit()
                 Text("Estimated cost: \(dollars(estimate.cost))")
                 if let reason = estimate.reason { Text(reason).foregroundStyle(.orange) }
+                if let applied = call.pricingBreakdown(catalog) { AppliedPricingView(applied: applied) }
             }.font(.caption).padding(.vertical, 6)
         } label: {
             Text("Request \(number) · \(call.timestamp.map { $0.formatted(date: .omitted, time: .standard) } ?? "Time unavailable") · \(call.model ?? "Model unavailable") · \(dollars(estimate.cost))")
                 .font(.caption)
         }
         .accessibilityLabel("Request \(number), \(call.model ?? "model unavailable"), estimated cost \(dollars(estimate.cost))")
+    }
+}
+
+struct AppliedPricingView: View {
+    let applied: PricingBreakdown
+    private let labels = ["Ordinary input", "Cached input", "Output (including reasoning)", "Cache write · 30 min", "Cache write · 12 h"]
+    var body: some View {
+        let rates = applied.rates
+        let prices = [rates.input, rates.cachedInput, rates.output, rates.cacheWriteWith30MinuteRetention, rates.cacheWriteWith12HourRetention]
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Applied pricing: \(applied.context)").font(.headline)
+            Text(applied.model).foregroundStyle(.secondary)
+            Text("Checked means this rate contributed tokens to an available estimate. Unchecked means it was not used.")
+                .foregroundStyle(.secondary)
+            ForEach(labels.indices, id: \.self) { i in
+                HStack {
+                    Image(systemName: applied.used[i] ? "checkmark.square" : "square")
+                        .accessibilityLabel(applied.used[i] ? "Applied" : "Not applied")
+                    Text(labels[i])
+                    Spacer()
+                    Text(prices[i].flatMap { try? $0.cost(1_000_000) }
+                        .map { $0.formatted(.number.precision(.fractionLength(0...8)).locale(.autoupdatingCurrent)) + " USD / 1 M tokens" } ?? "Unknown")
+                }.accessibilityElement(children: .combine)
+            }
+        }.font(.caption).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
 }
