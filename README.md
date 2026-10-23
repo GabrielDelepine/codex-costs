@@ -121,7 +121,9 @@ The current app does not estimate requests with nonzero cache writes because the
 
 ### Inspect individual requests
 
-The info panel lists validated requests with their sequence number, recorded usage-event timestamp, model, total input, cached reads, cache writes, output, selected context tier and estimated cost or unavailable reason. Expand a request to inspect its counters. A usage timestamp is not an inferred request start time; missing timestamps remain explicit.
+The info panel lists validated requests with their sequence number, recorded usage-event timestamp, model, total input, cached reads, cache writes, output, selected context tier and estimated cost or unavailable reason. Expand a request to inspect its counters and applied pricing. A usage timestamp is not an inferred request start time; missing timestamps remain explicit.
+
+**Applied pricing** shows only the model/context grids used by available request estimates. A conversation can show both short- and long-context grids when its requests used both; an individual request shows only its own grid. Read-only checked squares identify rate components with nonzero tokens in an available estimate. Unchecked components were not used; unknown unused prices remain explicit. Nonzero cache writes still block estimation because retention is unknown. If the conversation estimate is unavailable, any displayed grids are explicitly limited to available request estimates. Published units are normalized to USD per million tokens using each price’s declared divisor.
 
 Usage and request-cost subtotals are grouped by context tier. With a complete conversation estimate, the unrounded request costs reconcile with its total. Displayed values are rounded independently. If parsing or attribution is incomplete, the conversation remains unavailable and known request subtotals are labeled; they do not imply complete coverage. Repeated unchanged usage events do not create duplicate requests.
 

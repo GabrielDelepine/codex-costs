@@ -57,10 +57,22 @@ struct Usage: Equatable, Codable {
     }
 }
 struct AppliedPricing { let context: String; let rates: Rates }
+struct PricingBreakdown {
+    let model: String
+    let context: String
+    let rates: Rates
+    var used: [Bool]
+    var id: String { model + "\n" + context }
+}
 struct Call: Codable, Equatable {
     let model: String?
     let usage: Usage
     var timestamp: Date? = nil
+    func pricingBreakdown(_ catalog: Catalog?) -> PricingBreakdown? {
+        guard estimate(catalog).cost != nil, let model, let applied = try? appliedPricing(catalog) else { return nil }
+        return PricingBreakdown(model: model, context: applied.context, rates: applied.rates,
+                                used: [usage.input - usage.cache - usage.write > 0, usage.cache > 0, usage.output > 0, false, false])
+    }
     func appliedPricing(_ catalog: Catalog?) throws -> AppliedPricing {
         guard let model else { throw Failure.message("Model not recorded for request") }
         guard let published = catalog?.pricing["standard"]?[model] else { throw Failure.message("Standard price unavailable") }
@@ -141,6 +153,17 @@ struct Session: Identifiable, Codable, Equatable {
             groups[context] = group
         }
         return groups.values.sorted { $0.context < $1.context }
+    }
+    func pricingBreakdowns(_ catalog: Catalog?) -> [PricingBreakdown] {
+        var groups: [String: PricingBreakdown] = [:]
+        for call in calls {
+            guard let applied = call.pricingBreakdown(catalog) else { continue }
+            if var previous = groups[applied.id] {
+                previous.used = zip(previous.used, applied.used).map { $0 || $1 }
+                groups[applied.id] = previous
+            } else { groups[applied.id] = applied }
+        }
+        return groups.values.sorted { $0.id < $1.id }
     }
 }
 // Optional metadata fields allow existing local snapshots to survive schema additions.
