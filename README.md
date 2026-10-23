@@ -160,7 +160,7 @@ Conversations created in Work are not currently covered. Their visibility and us
 
 ### Guardian Reviews
 
-Internal Guardian Review sessions currently remain in the table and can affect conversation counts and calendar availability. Their IDs are not linked. Excluding these sessions is a proposed improvement, not an implemented filter.
+Guardian Review sessions are excluded from the table, counts, totals and calendar availability. Detection uses the explicit Guardian source marker, the `codex-auto-review` model or the title `Guardian review`. The source marker also identifies reviews without a recorded model. Calendar classification checks a cached header of up to 64 KiB; unusually large headers without a recognizable marker may remain visible until their metadata becomes identifiable.
 
 ### Potentially missing conversations and limited history
 
@@ -197,7 +197,7 @@ Native **FSEvents** notifications watch the `.codex` tree and filter for session
 
 The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted files are removed, and title-index changes update titles without rereading unchanged session contents.
 
-Calendar availability is determined from directory metadata and filenames, without parsing the contents of logs outside the selected range. Directory listings are cached as well.
+Calendar availability uses cached directory listings and bounded session headers to exclude internal Guardian Reviews. Usage counters outside the selected range are not parsed. Header classification is cached by file metadata and title-index changes are applied without rereading unchanged logs.
 
 A recovery check runs every 60 seconds, on app activation and after waking the Mac. It covers missed events, missing day folders and midnight changes, and remains available when native watching cannot start. File parsing runs away from the UI thread, and pricing downloads are scheduled independently of log updates.
 
