@@ -148,9 +148,9 @@ Model aliases are not guessed. A final JSON line still being written is ignored 
 
 ### Local files determine what is visible
 
-The app reads `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and titles from `~/.codex/session_index.jsonl`. It uses the default location and does not currently offer a custom Codex-home setting.
+The app reads active `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` files, flat archived `~/.codex/archived_sessions/rollout-*.jsonl` files, and titles from `~/.codex/session_index.jsonl`. It uses the default location and does not currently offer a custom Codex-home setting.
 
-Project-associated and projectless sessions can both appear when they are recorded there. This is not a guarantee of coverage across all Codex surfaces, devices or accounts. Archived sessions in other directories are not scanned.
+Project-associated and projectless sessions can both appear when they are recorded there. This is not a guarantee of coverage across all Codex surfaces, devices or accounts. Archived rollouts use their original local creation date encoded in the filename, rather than their archive date. Duplicate conversation IDs are counted once, preferring an active copy over an archived copy. Other storage locations are not scanned.
 
 The log format is internal to Codex and may change. The app cannot reliably estimate usage that its source files do not expose.
 
@@ -166,7 +166,7 @@ Guardian Review sessions are excluded from the table, counts, totals and calenda
 
 ### Potentially missing conversations and limited history
 
-There are reports of potentially missing conversations and different amounts of local history between machines. The cause has not been established; automatic deletion by Codex should not be assumed without evidence.
+There are reports of potentially missing conversations and different amounts of local history between machines. One confirmed coverage gap was archived rollout files: these are now scanned as well as active sessions. This does not establish the cause of every missing conversation or differences between machines; automatic deletion by Codex should not be assumed without evidence.
 
 Codex Costs currently keeps parsed usage in memory, not in a permanent conversation archive. If a source file disappears, its row is removed on a subsequent check. Running the app does not currently preserve a complete history after those files are gone.
 
@@ -197,7 +197,7 @@ There is no app account, API key, analytics service or local backend. The normal
 
 **Auto-select today** selects the current day immediately and follows date changes at the next recovery check (up to 60 seconds), on activation and after wake. It starts enabled on every app launch. Unchecking it keeps the selected dates fixed; applying a calendar selection also turns it off, while Cancel preserves the current mode and dates. Live usage updates work for any selected date range independently of this option.
 
-Native **FSEvents** notifications watch the `.codex` tree and filter for session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
+Native **FSEvents** notifications watch the `.codex` tree and filter for active session, archived session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
 
 The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted files are removed, and title-index changes update titles without rereading unchanged session contents.
 
