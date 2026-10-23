@@ -156,7 +156,9 @@ The log format is internal to Codex and may change. The app cannot reliably esti
 
 ### Work conversations
 
-Conversations created in Work are not currently covered. Their visibility and usable usage-data sources need investigation. The absence of a Work conversation from the table does not mean it consumed no tokens.
+Conversations created in Work are not currently covered. The app displays this limitation next to its totals and pricing notes. It only reads the supported local Codex rollout format; it does not read private desktop-app caches or infer token usage from chat metadata. No documented Work session export with the required per-request token counters was established during this investigation. This is a limit of the current reader, not evidence that Work stores no usage data. The absence of a Work conversation from the table does not mean it consumed no tokens.
+
+OpenAI documents [desktop and CLI commands separately](https://learn.chatgpt.com/docs/developer-commands). Those commands do not establish a local Work usage-file contract. Supporting another source requires a verified format, reliable model and token attribution, and deduplication by conversation ID.
 
 ### Guardian Reviews
 
