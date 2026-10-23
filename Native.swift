@@ -15,13 +15,13 @@ struct RangeCalendar: View {
         _month = State(initialValue: Calendar.current.dateInterval(of: .month, for: range.wrappedValue.end)!.start)
     }
     private var dates: [Date] {
-        let offset = (calendar.component(.weekday, from: month) - 1 + 7) % 7
+        let offset = (calendar.component(.weekday, from: month) - calendar.firstWeekday + 7) % 7
         let count = calendar.range(of: .day, in: .month, for: month)!.count
         let cells = ((offset + count + 6) / 7) * 7
         return (0..<cells).compactMap { calendar.date(byAdding: .day, value: $0 - offset, to: month) }
     }
     private var monthLabel: String {
-        let f = DateFormatter(); f.locale = Locale(identifier: "en_US"); f.dateFormat = "MMM yyyy"
+        let f = DateFormatter(); f.locale = .autoupdatingCurrent; f.setLocalizedDateFormatFromTemplate("MMM yyyy")
         return f.string(from: month)
     }
     var body: some View {
@@ -35,7 +35,7 @@ struct RangeCalendar: View {
                     .disabled(month >= calendar.dateInterval(of: .month, for: Date())!.start)
             }.buttonStyle(.borderless).font(.system(size: 10))
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(24), spacing: 0), count: 7), spacing: 2) {
-                ForEach(Array(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].enumerated()), id: \.offset) { _, day in
+                ForEach(Array((0..<7).map { calendar.veryShortStandaloneWeekdaySymbols[($0 + calendar.firstWeekday - 1) % 7] }.enumerated()), id: \.offset) { _, day in
                     Text(day).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).frame(width: 24, height: 16)
                 }
                 ForEach(dates, id: \.self) { date in
@@ -47,7 +47,7 @@ struct RangeCalendar: View {
                         if NSEvent.modifierFlags.contains(.shift) { range = DayRange(anchor ?? range.start, date) }
                         else { anchor = date; range = DayRange(date, date) }
                     } label: {
-                        Text(String(calendar.component(.day, from: date)))
+                        Text(calendar.component(.day, from: date).formatted(.number.grouping(.never).locale(.autoupdatingCurrent)))
                             .font(.system(size: 11)).monospacedDigit()
                             .foregroundStyle(selected ? Color.white : (enabled ? Color.primary : Color.secondary.opacity(inMonth ? 0.4 : 0.2)))
                             .frame(width: 24, height: 22)
@@ -55,7 +55,7 @@ struct RangeCalendar: View {
                             .contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(!enabled)
                         .help(enabled ? "Select date; Shift-click to extend the selection" : "No conversations available")
-                        .accessibilityLabel(date.formatted(.dateTime.month().day().year().locale(Locale(identifier: "en_US"))))
+                        .accessibilityLabel(date.formatted(.dateTime.month().day().year().locale(Locale.autoupdatingCurrent)))
                         .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
