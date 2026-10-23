@@ -56,7 +56,50 @@ struct Usage: Equatable, Codable {
         var u = Usage(); u.input = a.input-b.input; u.cache = a.cache-b.cache; u.write = a.write-b.write; u.output = a.output-b.output; u.reasoning = a.reasoning-b.reasoning; return u
     }
 }
-struct Call: Codable, Equatable { let model: String?; let usage: Usage }
+struct AppliedPricing { let context: String; let rates: Rates }
+struct Call: Codable, Equatable {
+    let model: String?
+    let usage: Usage
+    var timestamp: Date? = nil
+    func appliedPricing(_ catalog: Catalog?) throws -> AppliedPricing {
+        guard let model else { throw Failure.message("Model not recorded for request") }
+        guard let published = catalog?.pricing["standard"]?[model] else { throw Failure.message("Standard price unavailable") }
+        if let flat = published.unspecifiedContext {
+            return AppliedPricing(context: "Published rates without a context threshold", rates: flat)
+        }
+        guard published.contextSelection.status == "known", let threshold = published.contextSelection.inputTokenThreshold else {
+            throw Failure.message("Unknown context threshold")
+        }
+        let long = usage.input > threshold
+        guard let rates = long ? published.longContext : published.shortContext else { throw Failure.message("Context prices unavailable") }
+        return AppliedPricing(context: long ? "Long context" : "Short context", rates: rates)
+    }
+    func estimate(_ catalog: Catalog?) -> Estimate {
+        do {
+            let u = usage
+            guard u.numbers.allSatisfy({ $0 >= 0 }), u.input >= u.cache + u.write, u.reasoning <= u.output else {
+                throw Failure.message("Inconsistent token counters")
+            }
+            let applied = try appliedPricing(catalog)
+            // Retention is not present in Codex token counters: never guess it.
+            guard u.write == 0 else { throw Failure.message("Cache-write retention unknown") }
+            var sum: Decimal = 0
+            for (tokens, price) in [(u.input-u.cache-u.write, applied.rates.input), (u.cache, applied.rates.cachedInput), (u.output, applied.rates.output)] {
+                if tokens == 0 { continue }
+                guard let price else { throw Failure.message("Required price unknown (null)") }
+                sum += try price.cost(tokens)
+            }
+            return Estimate(cost: sum, reason: nil, context: applied.context)
+        } catch { return .unavailable(error.localizedDescription) }
+    }
+}
+struct RequestSummary {
+    let context: String
+    var usage = Usage()
+    var requests = 0
+    var available = 0
+    var subtotal: Decimal = 0
+}
 struct Session: Identifiable, Codable, Equatable {
     let id: String, file: URL, date: Date, title: String, models: [String], calls: [Call], usage: Usage, issues: [String]
     var guardianSource = false
@@ -75,32 +118,29 @@ struct Session: Identifiable, Codable, Equatable {
         guard models.count == 1 else { return .unavailable(models.isEmpty ? "Model not recorded" : "Multiple models used") }
         guard issues.isEmpty else { return .unavailable(issues.joined(separator: " · ")) }
         guard !calls.isEmpty else { return .unavailable("No usage recorded") }
-        guard let model = catalog?.pricing["standard"]?[models[0]] else { return .unavailable("Standard price unavailable") }
         var sum: Decimal = 0
         var contexts = Set<String>()
-        do {
-            for call in calls {
-                guard call.model == models[0] else { throw Failure.message("Unknown model for a request") }
-                let u = call.usage
-                guard u.numbers.allSatisfy({ $0 >= 0 }), u.input >= u.cache + u.write, u.reasoning <= u.output else { throw Failure.message("Inconsistent token counters") }
-                let rates: Rates
-                if let flat = model.unspecifiedContext { rates = flat; contexts.insert("Published rates without a context threshold") }
-                else {
-                    guard model.contextSelection.status == "known", let threshold = model.contextSelection.inputTokenThreshold else { throw Failure.message("Unknown context threshold") }
-                    let long = u.input > threshold
-                    guard let selected = long ? model.longContext : model.shortContext else { throw Failure.message("Context prices unavailable") }
-                    rates = selected; contexts.insert(long ? "Long context" : "Short context")
-                }
-                // Retention is not present in Codex token counters: never guess it.
-                guard u.write == 0 else { throw Failure.message("Cache-write retention unknown") }
-                for (tokens, price) in [(u.input-u.cache-u.write, rates.input), (u.cache, rates.cachedInput), (u.output, rates.output)] {
-                    if tokens == 0 { continue }
-                    guard let price else { throw Failure.message("Required price unknown (null)") }
-                    sum += try price.cost(tokens)
-                }
-            }
-            return Estimate(cost: sum, reason: nil, context: contexts.sorted().joined(separator: " + "))
-        } catch { return .unavailable(error.localizedDescription) }
+        for call in calls {
+            guard call.model == models[0] else { return .unavailable("Unknown model for a request") }
+            let estimate = call.estimate(catalog)
+            guard let cost = estimate.cost else { return estimate }
+            sum += cost; contexts.insert(estimate.context)
+        }
+        return Estimate(cost: sum, reason: nil, context: contexts.sorted().joined(separator: " + "))
+    }
+    func requestSummaries(_ catalog: Catalog?) -> [RequestSummary] {
+        var groups: [String: RequestSummary] = [:]
+        for call in calls {
+            let context = (try? call.appliedPricing(catalog).context) ?? "Context unavailable"
+            var group = groups[context] ?? RequestSummary(context: context)
+            group.requests += 1
+            group.usage.input += call.usage.input; group.usage.cache += call.usage.cache
+            group.usage.write += call.usage.write; group.usage.output += call.usage.output
+            group.usage.reasoning += call.usage.reasoning
+            if let cost = call.estimate(catalog).cost { group.subtotal += cost; group.available += 1 }
+            groups[context] = group
+        }
+        return groups.values.sorted { $0.context < $1.context }
     }
 }
 // Optional metadata fields allow existing local snapshots to survive schema additions.
@@ -192,7 +232,7 @@ enum Logs {
             guard delta.numbers.allSatisfy({ $0 >= 0 }) else { issues.insert("Token counters reset"); continue }
             guard tokenKeys.allSatisfy({ total[$0] is NSNumber }), let last = info["last_token_usage"] as? [String: Any], tokenKeys.allSatisfy({ last[$0] is NSNumber }) else { issues.insert("Incomplete token counters"); continue }
             guard Usage(last) == delta else { issues.insert("Usage delta does not match a request"); continue }
-            calls.append(Call(model: model, usage: delta))
+            calls.append(Call(model: model, usage: delta, timestamp: (event["timestamp"] as? String).flatMap(parseDate)))
         }
         guard !id.isEmpty else { throw Failure.message("Missing conversation ID") }
         return Session(id: id, file: url, date: date, title: titles[id] ?? "Untitled", models: models, calls: calls, usage: previous, issues: issues.sorted(), guardianSource: guardian)
