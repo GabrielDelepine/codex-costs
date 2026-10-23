@@ -11,10 +11,12 @@ import Observation
     var catalog: Catalog?
     var networkStatus = ""
     var logStatus = ""
+    var historySummary = "History may be incomplete."
+    var observationPeriods: [ObservedHistory.Period] = []
     var fetching = false
     var watching = false
     private var watcher: LogWatcher?
-    private let logs = SessionCache()
+    private let history = ObservedHistory()
     private var debounce: Task<Void, Never>?
     private var scanning = false
     private var rescanPending = false
@@ -71,15 +73,24 @@ import Observation
             rescanPending = false
             if followToday && range != .today { range = .today }
             let selected = range
-            let result = await logs.scan(folders: selected.folders(root: Logs.root))
-            let days = await logs.conversationDays()
-            if days != availableDays { availableDays = days }
+            let result = await history.refresh(range: selected)
+            if result.days != availableDays { availableDays = result.days }
+            historySummary = result.summary; observationPeriods = result.periods
             if range == selected {
-                if result.changed { sessions = result.sessions; updateEstimates() }
+                if sessions != result.sessions { sessions = result.sessions; updateEstimates() }
                 logStatus = result.errors.joined(separator: "\n")
             } else { rescanPending = true }
         } while rescanPending && !Task.isCancelled
         scanning = false
+    }
+    func clearHistory() async {
+        let selected = range
+        let result = await history.clear(range: selected)
+        historySummary = result.summary; observationPeriods = result.periods
+        availableDays = result.days
+        if range == selected { if sessions != result.sessions { sessions = result.sessions; updateEstimates() } }
+        logStatus = result.errors.joined(separator: "\n")
+        await scan()
     }
     func filesChanged() {
         // Cancel only the waiting debounce task, never an in-flight file read.
@@ -134,6 +145,8 @@ struct MainView: View {
     @State private var search = ""
     @State private var calendarOpen = false
     @State private var draft = DayRange.today
+    @State private var historyOpen = false
+    @State private var clearHistory = false
     var filtered: [Session] {
         store.sessions.filter { search.isEmpty || ($0.title + $0.id + $0.models.joined()).localizedCaseInsensitiveContains(search) }
     }
@@ -201,6 +214,23 @@ struct MainView: View {
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
+                    Text("Local observed history · May be incomplete").foregroundStyle(.secondary)
+                    Button("History details") { historyOpen = true }
+                        .popover(isPresented: $historyOpen) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Observed history").font(.headline)
+                                Text(store.historySummary)
+                                Text("These are observation checkpoints, not proof of complete activity. Sessions created and removed between checks or while the app was closed may be absent. Retained snapshots use current prices.")
+                                ScrollView {
+                                    ForEach(Array(store.observationPeriods.enumerated()), id: \.offset) { _, period in
+                                        Text("\(period.start.formatted(date: .abbreviated, time: .standard)) – \(period.lastCheck.formatted(date: .abbreviated, time: .standard))")
+                                    }
+                                }.frame(maxHeight: 120)
+                                Button("Clear retained history…", role: .destructive) { clearHistory = true }
+                            }.font(.caption).padding().frame(width: 360)
+                        }
+                }
+                HStack {
                     Link(destination: URL(string: "https://tools.pwa.ovh/openai-pricing")!) {
                         if let date = store.catalog.flatMap({ parseDate($0.fetchedAt) }) {
                             Text("Prices retrieved \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute().second().locale(Locale.autoupdatingCurrent))) (via tools.pwa.ovh) ↗")
@@ -218,6 +248,14 @@ struct MainView: View {
         }
         .sheet(item: $detail) { session in
             DetailView(session: store.sessions.first(where: { $0.id == session.id }) ?? session, catalog: store.catalog)
+        }
+        .confirmationDialog("Clear retained history?", isPresented: $clearHistory) {
+            Button("Clear retained history", role: .destructive) {
+                historyOpen = false
+                Task { await store.clearHistory() }
+            }
+        } message: {
+            Text("Removes retained snapshots and observation periods. Currently readable logs will be observed again. Codex source files are never changed.")
         }
     }
 }
@@ -237,6 +275,8 @@ struct DetailView: View {
                     }.accessibilityLabel("Copy conversation ID")
                 }
                 Text(session.models.joined(separator: ", ")).foregroundStyle(.secondary)
+                Text(session.sourceAvailable ? "Source available at the latest check" : "Retained snapshot · Source not readable at the latest check")
+                    .font(.caption).foregroundStyle(.secondary)
                 let estimate = session.estimate(catalog)
                 Text(dollars(estimate.cost)).font(.largeTitle.monospacedDigit())
                 if let reason = estimate.reason { Label(reason, systemImage: "info.circle").foregroundStyle(.orange) }
@@ -257,6 +297,7 @@ struct DetailView: View {
                 }
                 Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
                 Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
+                    .disabled(!session.sourceAvailable)
             }.padding(24)
         }.frame(width: 660, height: 650)
     }
