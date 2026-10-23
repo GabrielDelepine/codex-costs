@@ -119,6 +119,12 @@ Prices have explicit currency and token units. Calculations use decimal arithmet
 
 The current app does not estimate requests with nonzero cache writes because the local counters do not identify the retention duration needed to choose their price.
 
+### Inspect individual requests
+
+The info panel lists validated requests with their sequence number, recorded usage-event timestamp, model, total input, cached reads, cache writes, output, selected context tier and estimated cost or unavailable reason. Expand a request to inspect its counters. A usage timestamp is not an inferred request start time; missing timestamps remain explicit.
+
+Usage and request-cost subtotals are grouped by context tier. With a complete conversation estimate, the unrounded request costs reconcile with its total. Displayed values are rounded independently. If parsing or attribution is incomplete, the conversation remains unavailable and known request subtotals are labeled; they do not imply complete coverage. Repeated unchanged usage events do not create duplicate requests.
+
 ### Context pricing assumptions
 
 Context-dependent prices are selected **per request**, not from the sum of an entire conversation or the model's maximum context capacity.

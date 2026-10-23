@@ -290,6 +290,34 @@ struct DetailView: View {
                     row("Usable requests", Int64(session.calls.count))
                 }
                 if !estimate.context.isEmpty { Text(estimate.context).font(.headline) }
+                Divider()
+                Text("Validated requests").font(.headline)
+                Text("Only matched cumulative-counter deltas are listed. Timestamps are recorded usage-event times, not inferred request start times. Repeated unchanged events do not add requests.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !session.issues.isEmpty {
+                    Text("Request coverage is incomplete: \(session.issues.joined(separator: " · ")). Request subtotals cannot replace the unavailable conversation estimate.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if session.calls.isEmpty { Text("No validated requests recorded.").foregroundStyle(.secondary) }
+                ForEach(session.requestSummaries(catalog), id: \.context) { summary in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(summary.context).font(.subheadline.bold())
+                        Text("\(summary.requests) requests · \(summary.usage.input.formatted()) input · \(summary.usage.cache.formatted()) cached · \(summary.usage.write.formatted()) writes · \(summary.usage.output.formatted()) output")
+                        Text(summary.available == summary.requests
+                             ? "Request subtotal: \(dollars(summary.subtotal))"
+                             : "Known request subtotal: \(summary.available == 0 ? "—" : dollars(summary.subtotal)) · \(summary.requests - summary.available) unavailable")
+                    }.font(.caption)
+                }
+                if estimate.cost == nil && !session.calls.isEmpty {
+                    Text("Individual estimates are shown where possible. The conversation total remains unavailable when its full usage cannot be established.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(session.calls.enumerated()), id: \.offset) { index, call in
+                        RequestDetails(number: index + 1, call: call, catalog: catalog)
+                    }
+                }
+                Divider()
                 if session.models.count == 1, let model = catalog?.pricing["standard"]?[session.models[0]] {
                     if let rates = model.unspecifiedContext { priceBlock("Published Standard rates", rates) }
                     if let rates = model.shortContext { priceBlock("Short context (≤ \(model.contextSelection.inputTokenThreshold ?? 0) input tokens)", rates) }
@@ -316,5 +344,32 @@ struct DetailView: View {
                 }
             }
         }.font(.caption).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+struct RequestDetails: View {
+    let number: Int
+    let call: Call
+    let catalog: Catalog?
+    var body: some View {
+        let estimate = call.estimate(catalog)
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(call.timestamp.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "Timestamp not recorded")
+                Text("Model: \(call.model ?? "Not recorded")")
+                Text("Context: \((try? call.appliedPricing(catalog).context) ?? "Unavailable")")
+                Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 5) {
+                    GridRow { Text("Total input (including cache)"); Text(call.usage.input.formatted()) }
+                    GridRow { Text("Cached input (read)"); Text(call.usage.cache.formatted()) }
+                    GridRow { Text("Cache writes"); Text(call.usage.write.formatted()) }
+                    GridRow { Text("Output (including reasoning)"); Text(call.usage.output.formatted()) }
+                }.monospacedDigit()
+                Text("Estimated cost: \(dollars(estimate.cost))")
+                if let reason = estimate.reason { Text(reason).foregroundStyle(.orange) }
+            }.font(.caption).padding(.vertical, 6)
+        } label: {
+            Text("Request \(number) · \(call.timestamp.map { $0.formatted(date: .omitted, time: .standard) } ?? "Time unavailable") · \(call.model ?? "Model unavailable") · \(dollars(estimate.cost))")
+                .font(.caption)
+        }
+        .accessibilityLabel("Request \(number), \(call.model ?? "model unavailable"), estimated cost \(dollars(estimate.cost))")
     }
 }
