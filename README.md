@@ -172,6 +172,21 @@ Codex Costs currently keeps parsed usage in memory, not in a permanent conversat
 
 A future local history feature would also need to explain gaps: conversations created and removed while the app was closed might never have been observed.
 
+### Investigating differences in local history
+
+OpenAI’s [app-server documentation](https://learn.chatgpt.com/docs/app-server#api-overview) confirms that archiving moves a thread log into an archived directory, unarchiving restores it to active sessions, and explicit deletion permanently removes a persisted thread and its spawned descendants. It also distinguishes threads loaded in memory from stored threads. Unloading an idle thread from memory is not documented as deleting its saved log.
+
+These documented operations do not establish an automatic seven-day, ten-day or other fixed retention policy. The reported differences between machines remain unexplained without a comparison of their versions, configuration and source inventory. The reader scans active and archived rollouts; this fixes one confirmed source-coverage gap without establishing the cause of every reported history difference.
+
+To investigate a missing conversation locally:
+
+1. Confirm its creation day, not just the day of its latest activity. The table groups rollouts by the local creation timestamp in the filename; a UTC metadata timestamp can fall on a different local day.
+2. Look for its ID in active `~/.codex/sessions` and flat `~/.codex/archived_sessions` rollout filenames. Check whether the file moved, rather than assuming it was deleted. Do not modify these sources.
+3. Compare the app’s supported source location with the Codex home used by that installation. Another Mac, a remote execution host, another home directory or a Work conversation is not guaranteed to have a supported rollout on this Mac.
+4. If a supported file exists but is absent from the selected day, record the app and Codex versions, source category, filename date and any read-error message. Distinguish a missing row from a visible row whose estimate is unavailable.
+
+Keep IDs and file inventories local when possible. A report can describe the source category and date discrepancy without sharing prompts, full logs, credentials or screenshots of private conversations. The app cannot recover a source it never observed or establish why Codex removed or relocated it.
+
 ### Date and time formatting
 
 Interface text stays English and conversation titles are preserved. Displayed dates, times, calendar labels, token counts and USD amounts use the Mac’s regional preferences, including its clock format and local time zone. USD remains the estimation currency; regional formatting does not convert amounts. Log filenames and wire timestamps retain their fixed source formats.
