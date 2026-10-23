@@ -130,7 +130,7 @@ import Observation
         WindowGroup {
             MainView(store: store)
                 .environment(\.locale, Locale.autoupdatingCurrent)
-                .frame(minWidth: 1020, minHeight: 520)
+                .frame(minWidth: 1080, minHeight: 520)
                 .task { await store.run() }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.wake() }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in store.wake() }

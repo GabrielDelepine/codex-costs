@@ -43,7 +43,7 @@ It is designed around **local Codex session data**. If you need exact billing, a
 
 The project deliberately stays small:
 
-- **Native macOS interface.** A table, a compact calendar and an info panel, built with SwiftUI and AppKit.
+- **Native macOS interface.** A table, a compact calendar and an info panel, built with SwiftUI and AppKit. The window has a 1080-point minimum width to leave room for the table’s columns and native spacing.
 - **No third-party dependencies.** No Electron runtime, package installation or local service to maintain.
 - **No API key required.** Usage comes from local logs; published prices come from a JSON endpoint.
 - **Private conversation data.** Titles, IDs, prompts and token counters are not sent to the pricing service.
