@@ -193,6 +193,8 @@ There is no app account, API key, analytics service or local backend. The normal
 
 ## How updates work
 
+**Auto-select today** selects the current day immediately and follows date changes at the next recovery check (up to 60 seconds), on activation and after wake. It starts enabled on every app launch. Unchecking it keeps the selected dates fixed; applying a calendar selection also turns it off, while Cancel preserves the current mode and dates. Live usage updates work for any selected date range independently of this option.
+
 Native **FSEvents** notifications watch the `.codex` tree and filter for session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
 
 The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted files are removed, and title-index changes update titles without rereading unchanged session contents.
