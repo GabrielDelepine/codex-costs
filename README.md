@@ -260,6 +260,14 @@ Keep each change focused on an issue or clearly described problem. Explain the r
 
 There is currently no committed automated test suite. Do not describe a build or an ad-hoc check as a full test-suite run.
 
+### Test an open pull request
+
+Run `./scripts/test-pr.sh` from a clean checkout in a macOS terminal. It lists all open PRs using GitHub’s public API, without a token, GitHub CLI, `gum` or an extra package. Choose one PR from the numbered menu, or enter `0` to cancel. The terminal view uses colored headings and numbered stages; set `NO_COLOR=1` to disable styling. Redirected output and `TERM=dumb` remain plain text. Anonymous API rate limits apply.
+
+The script refuses staged, unstaged and untracked files, then checks that the chosen PR is open and can be merged. It fetches `refs/pull/NUMBER/merge` from origin using a temporary public HTTPS URL, verifies GitHub’s test merge SHA, and runs `git switch --detach FETCH_HEAD`. This tests the PR combined with its target branch on GitHub at that moment, independently of your local `main`; later changes can produce a different result. It does not merge anything on GitHub.
+
+Successful Git and build output is hidden; failures show indented diagnostics. It runs the selected PR’s `./build.sh`, gracefully quits any running Codex Costs instance, then opens `build/Codex Costs.app`. Choose code you trust. If compilation fails, the existing app is left running; if quitting fails, the script stops with manual instructions. The checkout stays detached, and the script prints a command to return to your starting branch or commit. It also prints the PR URL and invites you to add a screenshot with private data hidden and a “tested” comment after verification.
+
 ### Release a build
 
 Package the compiled app in a DMG for download, verify the final image, then calculate its SHA-256. Attach the image and checksum to the GitHub release and document the actual architecture, minimum macOS version and signing status. A checksum does not provide Developer ID signing or notarization.
