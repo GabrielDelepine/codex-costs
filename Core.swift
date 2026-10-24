@@ -59,11 +59,15 @@ struct Usage: Equatable {
 struct Call { let model: String?; let usage: Usage }
 struct Session: Identifiable {
     let id: String, file: URL, date: Date, title: String, models: [String], calls: [Call], usage: Usage, issues: [String]
+    var guardianSource = false
+    var isGuardianReview: Bool {
+        guardianSource || models.contains("codex-auto-review") || title.caseInsensitiveCompare("Guardian review") == .orderedSame
+    }
     func titled(_ newTitle: String) -> Session {
-        Session(id: id, file: file, date: date, title: newTitle, models: models, calls: calls, usage: usage, issues: issues)
+        Session(id: id, file: file, date: date, title: newTitle, models: models, calls: calls, usage: usage, issues: issues, guardianSource: guardianSource)
     }
     var codexURL: URL? {
-        guard !models.contains("codex-auto-review"), title.caseInsensitiveCompare("Guardian review") != .orderedSame else { return nil }
+        guard !isGuardianReview else { return nil }
         return URL(string: "codex://threads/" + id)
     }
     func estimate(_ catalog: Catalog?) -> Estimate {
@@ -115,12 +119,30 @@ struct ScanResult {
 }
 enum Logs {
     static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+    static func guardianSource(_ payload: [String: Any]) -> Bool {
+        let source = payload["source"] as? [String: Any]
+        let subagent = source?["subagent"] as? [String: Any]
+        return subagent?["other"] as? String == "guardian"
+    }
+    // Calendar classification reads only a bounded header, not usage or conversation contents.
+    static func guardianHeader(_ url: URL) -> Bool {
+        guard let file = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? file.close() }
+        guard let data = try? file.read(upToCount: 65_536) else { return false }
+        let text = String(decoding: data, as: UTF8.self)
+        for line in text.split(separator: "\n") {
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], let p = event["payload"] as? [String: Any] else { continue }
+            if event["type"] as? String == "session_meta", guardianSource(p) { return true }
+            if event["type"] as? String == "turn_context", p["model"] as? String == "codex-auto-review" { return true }
+        }
+        return false
+    }
     static func read(_ url: URL, titles: [String: String]) throws -> Session {
         let data = try Data(contentsOf: url)
         guard let text = String(data: data, encoding: .utf8) else { throw Failure.message("Unreadable log") }
         let lines = text.components(separatedBy: "\n")
         var id = "", model: String?, models: [String] = [], calls: [Call] = [], previous = Usage(), issues = Set<String>()
-        var date = Date.distantPast
+        var date = Date.distantPast, guardian = false
         // Rollout filenames encode the local creation time, not UTC.
         let name = url.deletingPathExtension().lastPathComponent
         if name.hasPrefix("rollout-"), name.count >= 64 {
@@ -134,6 +156,7 @@ enum Logs {
             }
             let p = event["payload"] as? [String: Any] ?? [:]
             if event["type"] as? String == "session_meta" {
+                guardian = guardian || guardianSource(p)
                 id = p["id"] as? String ?? id
                 if date == .distantPast, let stamp = p["timestamp"] as? String { date = parseDate(stamp) ?? date }
             }
@@ -151,7 +174,7 @@ enum Logs {
             calls.append(Call(model: model, usage: delta))
         }
         guard !id.isEmpty else { throw Failure.message("Missing conversation ID") }
-        return Session(id: id, file: url, date: date, title: titles[id] ?? "Untitled", models: models, calls: calls, usage: previous, issues: issues.sorted())
+        return Session(id: id, file: url, date: date, title: titles[id] ?? "Untitled", models: models, calls: calls, usage: previous, issues: issues.sorted(), guardianSource: guardian)
     }
 }
 
@@ -205,9 +228,10 @@ actor SessionCache {
     private var indexStamp: Stamp?
     private var lastFolders: [URL] = []
     private var lastErrors: [String] = []
-    private var dayDirectories: [URL: (stamp: Stamp, hasLogs: Bool)] = [:]
+    private var dayDirectories: [URL: (stamp: Stamp, files: [URL])] = [:]
+    private var guardianHeaders: [URL: (stamp: Stamp, guardian: Bool)] = [:]
     init(root: URL = Logs.root) { self.root = root }
-    // Inspect directory names/metadata only; never parse out-of-range logs.
+    // Cache directory listings and bounded classification headers independently of usage parsing.
     func conversationDays() -> Set<Date> {
         let fm = FileManager.default
         func directories(_ url: URL) -> [URL] {
@@ -218,7 +242,7 @@ actor SessionCache {
         }
         let format = DateFormatter(); format.locale = Locale(identifier: "en_US_POSIX"); format.dateFormat = "yyyy/MM/dd"
         format.isLenient = false
-        var result = Set<Date>(), seen = Set<URL>()
+        var result = Set<Date>(), seen = Set<URL>(), seenFiles = Set<URL>()
         for year in directories(root.appendingPathComponent("sessions")) {
             for month in directories(year) {
                 for day in directories(month) {
@@ -226,10 +250,23 @@ actor SessionCache {
                     guard let stamp = try? Stamp(day) else { continue }
                     if dayDirectories[day]?.stamp != stamp {
                         let names = (try? fm.contentsOfDirectory(atPath: day.path)) ?? []
-                        let hasLogs = names.contains { $0.hasPrefix("rollout-") && $0.hasSuffix(".jsonl") }
-                        dayDirectories[day] = (stamp, hasLogs)
+                        let files = names.filter { $0.hasPrefix("rollout-") && $0.hasSuffix(".jsonl") }.map { day.appendingPathComponent($0) }
+                        dayDirectories[day] = (stamp, files)
                     }
-                    if dayDirectories[day]?.hasLogs == true {
+                    var hasConversations = false
+                    for file in dayDirectories[day]?.files ?? [] {
+                        seenFiles.insert(file)
+                        guard let stamp = try? Stamp(file) else { continue }
+                        if guardianHeaders[file]?.stamp != stamp {
+                            guardianHeaders[file] = (stamp, Logs.guardianHeader(file))
+                        }
+                        let id = String(file.deletingPathExtension().lastPathComponent.suffix(36))
+                        if guardianHeaders[file]?.guardian != true,
+                           titles[id]?.caseInsensitiveCompare("Guardian review") != .orderedSame {
+                            hasConversations = true
+                        }
+                    }
+                    if hasConversations {
                         let text = year.lastPathComponent + "/" + month.lastPathComponent + "/" + day.lastPathComponent
                         if let date = format.date(from: text) { result.insert(Calendar.current.startOfDay(for: date)) }
                     }
@@ -237,6 +274,7 @@ actor SessionCache {
             }
         }
         for url in Array(dayDirectories.keys) where !seen.contains(url) { dayDirectories.removeValue(forKey: url) }
+        for url in Array(guardianHeaders.keys) where !seenFiles.contains(url) { guardianHeaders.removeValue(forKey: url) }
         return result
     }
     func scan(folders: [URL]) -> ScanResult {
@@ -295,7 +333,8 @@ actor SessionCache {
         var sessions: [Session] = []
         for entry in entries.values {
             let title = titles[entry.session.id] ?? "Untitled"
-            sessions.append(entry.session.titled(title))
+            let session = entry.session.titled(title)
+            if !session.isGuardianReview { sessions.append(session) }
         }
         sessions.sort { a, b in
             if a.date == b.date { return a.id < b.id }
