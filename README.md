@@ -4,6 +4,8 @@
 
 Codex Costs is a small, native macOS app for people who use Codex and want to understand their usage without running terminal reports. Pick a day or a date range, compare conversations in a table, and open the details to see input, cached and output tokens alongside the prices used for the estimate.
 
+Click a conversation title to open it in Codex. The info button opens its details, including the full selectable ID and a **Copy ID** button.
+
 The app reads the Codex session files already on your Mac. You do not need an API key, an additional account or a local server. Your conversation data stays on your computer.
 
 [Download a release](https://github.com/GabrielDelepine/codex-costs/releases) · [Report a problem](https://github.com/GabrielDelepine/codex-costs/issues) · [Contribute](#contributing)

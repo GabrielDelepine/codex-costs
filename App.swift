@@ -185,13 +185,11 @@ struct MainView: View {
             Table(filtered, selection: $selection) {
                 TableColumn("Date") { s in Text(s.date, format: .dateTime.day().month().year()).monospacedDigit() }.width(100)
                 TableColumn("Time") { s in Text(s.date, format: .dateTime.hour().minute().second()).monospacedDigit() }.width(85)
-                TableColumn("Conversation") { s in Text(s.title).lineLimit(2).help(s.title) }.width(min: 160, ideal: 280)
-                TableColumn("ID") { s in
+                TableColumn("Conversation") { s in
                     if let url = s.codexURL {
-                        Link(s.id, destination: url).font(.system(.caption, design: .monospaced)).help("Open conversation in Codex")
-                            .contextMenu { Button("Copy conversation ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s.id, forType: .string) } }
-                    } else { Text(s.id).font(.caption).textSelection(.enabled) }
-                }.width(260)
+                        Link(s.title, destination: url).lineLimit(2).help("Open in Codex: \(s.title)")
+                    } else { Text(s.title).lineLimit(2).help(s.title) }
+                }.width(min: 160, ideal: 280)
                 TableColumn("Model") { s in Text(s.models.isEmpty ? "—" : s.models.joined(separator: ", ")).help(s.models.joined(separator: ", ")) }.width(145)
                 TableColumn("Estimated cost") { s in Text(dollars(store.estimate(s).cost)).monospacedDigit().help(store.estimate(s).reason ?? "Standard API equivalent") }.width(105)
                 TableColumn("") { s in Button { detail = s } label: { Image(systemName: "info.circle") }.buttonStyle(.borderless).accessibilityLabel("Details for \(s.title)") }.width(30)
@@ -227,8 +225,13 @@ struct DetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack { Text(session.title).font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-                if let url = session.codexURL { Link(session.id, destination: url).font(.system(.body, design: .monospaced)) }
-                else { Text(session.id).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
+                HStack {
+                    Text(session.id).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                    Button("Copy ID") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(session.id, forType: .string)
+                    }.accessibilityLabel("Copy conversation ID")
+                }
                 Text(session.models.joined(separator: ", ")).foregroundStyle(.secondary)
                 let estimate = session.estimate(catalog)
                 Text(dollars(estimate.cost)).font(.largeTitle.monospacedDigit())
