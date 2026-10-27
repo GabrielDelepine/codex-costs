@@ -13,12 +13,20 @@ import Observation
     var logStatus = ""
     var fetching = false
     var watching = false
+    var updateStatus: String {
+        if fetching { return "Updating prices…" }
+        let updates = watching
+            ? (windowVisible ? "Live filesystem events" : "Filesystem events batched over 30 s")
+            : "Recovery scan every 60 s"
+        return updates + " · Prices every 6 h"
+    }
     private var watcher: LogWatcher?
     private let logs = SessionCache()
-    private var debounce: Task<Void, Never>?
+    private(set) var windowVisible = false
     private var scanning = false
     private var rescanPending = false
     private var running = false
+    private var monitoring: Task<Void, Never>?
     private var lastAttempt = Date.distantPast
     private let cache = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CodexCosts/pricing.json")
     init() {
@@ -27,8 +35,11 @@ import Observation
     func estimate(_ session: Session) -> Estimate {
         estimates[session.id] ?? .unavailable("Usage not processed yet")
     }
-    private func updateEstimates() {
-        estimates = Dictionary(sessions.map { ($0.id, $0.estimate(catalog)) }, uniquingKeysWith: { _, new in new })
+    private func updateEstimates(changedIDs: Set<String>? = nil) {
+        estimates = Dictionary(sessions.map { session in
+            let previous = changedIDs?.contains(session.id) == false ? estimates[session.id] : nil
+            return (session.id, previous ?? session.estimate(catalog))
+        }, uniquingKeysWith: { _, new in new })
     }
     func select(_ selection: DayRange) {
         followToday = false
@@ -67,46 +78,84 @@ import Observation
     func scan() async {
         if scanning { rescanPending = true; return }
         scanning = true
+        var updatedIDs = Set<String>()
         repeat {
             rescanPending = false
             if followToday && range != .today { range = .today }
             let selected = range
             let result = await logs.scan(folders: selected.folders(root: Logs.root))
+            updatedIDs.formUnion(result.updatedSessionIDs)
             let days = await logs.conversationDays()
             if days != availableDays { availableDays = days }
             if range == selected {
-                if result.changed { sessions = result.sessions; updateEstimates() }
+                if result.changed { sessions = result.sessions; updateEstimates(changedIDs: updatedIDs) }
+                updatedIDs.removeAll()
                 logStatus = result.errors.joined(separator: "\n")
             } else { rescanPending = true }
         } while rescanPending && !Task.isCancelled
         scanning = false
     }
     func filesChanged() {
-        // Cancel only the waiting debounce task, never an in-flight file read.
-        debounce?.cancel()
-        debounce = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-            guard !Task.isCancelled else { return }
-            self?.debounce = nil
-            await self?.scan()
+        // FSEvents already batches writes. Never postpone a scan for a quiet period.
+        Task { await scan() }
+    }
+    func updateWindowVisibility(excluding closingWindow: NSWindow? = nil) {
+        let visible = !NSApp.isHidden && NSApp.windows.contains {
+            $0 !== closingWindow && $0.canBecomeMain && $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible)
         }
+        guard visible != windowVisible else { return }
+        windowVisible = visible
+        if running { configureWatcher() }
+        if visible { wake() }
+        else if running { Task { await scan() } }
+    }
+    private func configureWatcher() {
+        // Start the new stream before checking logs, covering writes during the transition.
+        watcher = LogWatcher(root: Logs.root, latency: windowVisible ? 0.4 : 30) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.running else { return }
+                self.filesChanged()
+            }
+        }
+        watching = watcher?.isRunning == true
     }
     func wake() {
         Task { await scan() }
         Task { await refreshPrices() }
     }
+    func start() {
+        guard monitoring == nil else { return }
+        // Monitoring belongs to the app, not to the first window that happened to open.
+        monitoring = Task { await run() }
+    }
     func run() async {
         guard !running else { return }; running = true
-        watcher = LogWatcher(root: Logs.root) { [weak self] in
-            Task { @MainActor [weak self] in self?.filesChanged() }
+        let visibilityNotifications = [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification,
+                                       NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                                       NSApplication.didHideNotification, NSApplication.didUnhideNotification,
+                                       NSApplication.didBecomeActiveNotification]
+        let observers = visibilityNotifications.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                let closing = name == NSWindow.willCloseNotification ? notification.object as? NSWindow : nil
+                Task { @MainActor [weak self] in self?.updateWindowVisibility(excluding: closing) }
+            }
         }
-        watching = watcher?.isRunning == true
-        defer { watcher = nil; watching = false; running = false; debounce?.cancel() }
+        let wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.wake() }
+        }
+        updateWindowVisibility()
+        if watcher == nil { configureWatcher() }
+        defer {
+            for observer in observers { NotificationCenter.default.removeObserver(observer) }
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            watcher = nil; watching = false; running = false
+        }
         await scan()
         Task { await refreshPrices() }
         // Recovery for missed events, sleep, missing folders, midnight and pricing deadlines.
         while !Task.isCancelled {
             do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            if !watching { configureWatcher() }
             await scan()
             Task { await refreshPrices() }
         }
@@ -121,10 +170,8 @@ import Observation
             MainView(store: store)
                 .environment(\.locale, Locale.autoupdatingCurrent)
                 .frame(minWidth: 1020, minHeight: 520)
-                .task { await store.run() }
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.wake() }
-                .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in store.wake() }
-                .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
+                .task { store.start() }
+                .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); store.updateWindowVisibility() }
         }.defaultSize(width: 1220, height: 700)
         .commands {
             CommandGroup(replacing: .appInfo) {
@@ -275,7 +322,7 @@ struct MainView: View {
                         } else { Text("No prices available (via tools.pwa.ovh) ↗") }
                     }
                     Spacer()
-                    Text(store.fetching ? "Updating prices…" : (store.watching ? "Live filesystem events · Prices every 6 h" : "Recovery scan every 60 s · Prices every 6 h")).foregroundStyle(.secondary)
+                    Text(store.updateStatus).foregroundStyle(.secondary)
                 }
                 Text("Estimate convention: total input per request, including cached tokens, determines the context tier; selected rates apply to the entire request. These rules remain unverified by the endpoint.").foregroundStyle(.secondary)
                 Text("Excludes tools, subagents and surcharges. Total excludes unavailable estimates. Logs stay on your Mac.").foregroundStyle(.secondary)

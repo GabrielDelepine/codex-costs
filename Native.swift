@@ -85,7 +85,7 @@ private final class EventRelay {
 final class LogWatcher {
     private var stream: FSEventStreamRef?
     private let queue = DispatchQueue(label: "ovh.pwa.codex-costs.events", qos: .utility)
-    init(root: URL, onChange: @escaping () -> Void) {
+    init(root: URL, latency: CFTimeInterval, onChange: @escaping () -> Void) {
         let relay = EventRelay(root: root.path, handler: onChange)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(relay).toOpaque(), retain: { info in
             guard let info else { return nil }
@@ -99,7 +99,7 @@ final class LogWatcher {
             let relay = Unmanaged<EventRelay>.fromOpaque(info).takeUnretainedValue()
             let paths = unsafeBitCast(rawPaths, to: NSArray.self) as? [String] ?? []
             relay.receive(paths: paths, flags: flags, count: count)
-        }, &context, [root.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.4, flags)
+        }, &context, [root.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
         if let stream {
             FSEventStreamSetDispatchQueue(stream, queue)
             if !FSEventStreamStart(stream) { FSEventStreamInvalidate(stream); FSEventStreamRelease(stream); self.stream = nil }
