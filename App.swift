@@ -115,6 +115,7 @@ import Observation
 
 @main struct CodexCostsApp: App {
     @State private var store = Store()
+    @Environment(\.openWindow) private var openWindow
     var body: some Scene {
         WindowGroup {
             MainView(store: store)
@@ -125,8 +126,78 @@ import Observation
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in store.wake() }
                 .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
         }.defaultSize(width: 1220, height: 700)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Codex Costs") { openWindow(id: "about") }
+            }
+        }
+        Window("About Codex Costs", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
     }
 }
+struct AboutView: View {
+    private let metadata = Bundle.main.infoDictionary ?? [:]
+
+    private func value(_ key: String) -> String {
+        metadata[key] as? String ?? ""
+    }
+
+    private func timestamp(_ key: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: value(key)) else { return "Unavailable" }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return "\(formatter.string(from: date)) (\(formatter.timeZone.abbreviation(for: date) ?? formatter.timeZone.identifier))"
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            HStack(spacing: 16) {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable().frame(width: 72, height: 72)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Codex Costs").font(.system(size: 22, weight: .semibold))
+                    Text("Version \(value("CFBundleShortVersionString"))")
+                        .font(.body).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            Divider()
+            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 10) {
+                GridRow {
+                    Text("Commit").foregroundStyle(.secondary)
+                    if value("CodexCommitHash").count == 40,
+                       value("CodexCommitHash").allSatisfy({ $0.isHexDigit }),
+                       let url = URL(string: "https://github.com/GabrielDelepine/codex-costs/commit/\(value("CodexCommitHash"))") {
+                        Link(String(value("CodexCommitHash").prefix(7)), destination: url)
+                            .help(value("CodexCommitHash"))
+                            .accessibilityLabel("View commit \(value("CodexCommitHash")) on GitHub")
+                    } else {
+                        Text("Unavailable")
+                    }
+                }
+                GridRow { Text("Commit date").foregroundStyle(.secondary); Text(timestamp("CodexCommitDate")) }
+                GridRow { Text("Built").foregroundStyle(.secondary); Text(timestamp("CodexBuildDate")) }
+            }
+            .font(.system(size: 11))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+            if value("CodexSourceState") == "Modified" {
+                Text("Built with local changes; the commit links to the base source.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(24)
+        .frame(width: 384)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct MainView: View {
     @Bindable var store: Store
     @State private var selection: String?
