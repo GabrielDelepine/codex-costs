@@ -119,6 +119,8 @@ Prices have explicit currency and token units. Calculations use decimal arithmet
 
 The current app does not estimate requests with nonzero cache writes because the local counters do not identify the retention duration needed to choose their price.
 
+**Applied pricing: Short context** (or the applicable context) replaces the separate context heading and shows only the model/context grids used by available request estimates. A conversation can show both short- and long-context grids when its requests used both. Model labels appear only for conversations with multiple recorded models; grids are grouped by model. The explanation of the indicators follows the rate rows. Read-only checked squares identify rate components with nonzero tokens in an available estimate. Unchecked components were not used; unknown unused prices remain explicit. Nonzero cache writes still block estimation because retention is unknown. If the conversation estimate is unavailable, any displayed grids are explicitly limited to available request estimates. Published units are normalized to USD per million tokens using each price’s declared divisor.
+
 ### Context pricing assumptions
 
 Context-dependent prices are selected **per request**, not from the sum of an entire conversation or the model's maximum context capacity.

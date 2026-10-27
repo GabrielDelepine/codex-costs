@@ -316,11 +316,15 @@ struct DetailView: View {
                     row("Of which reasoning (do not add)", session.usage.reasoning)
                     row("Usable requests", Int64(session.calls.count))
                 }
-                if !estimate.context.isEmpty { Text(estimate.context).font(.headline) }
-                if session.models.count == 1, let model = catalog?.pricing["standard"]?[session.models[0]] {
-                    if let rates = model.unspecifiedContext { priceBlock("Published Standard rates", rates) }
-                    if let rates = model.shortContext { priceBlock("Short context (≤ \(model.contextSelection.inputTokenThreshold ?? 0) input tokens)", rates) }
-                    if let rates = model.longContext { priceBlock("Long context", rates) }
+                let breakdowns = session.pricingBreakdowns(catalog)
+                if breakdowns.isEmpty {
+                    Text("No pricing applied: no request estimate is available.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    if estimate.cost == nil {
+                        Text("Pricing below applies only to available request estimates; the conversation estimate is unavailable.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(breakdowns, id: \.id) { applied in AppliedPricingView(applied: applied, showModel: session.models.count > 1) }
                 }
                 Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
                 Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
@@ -330,17 +334,30 @@ struct DetailView: View {
     func row(_ title: String, _ value: Int64) -> some View {
         GridRow { Text(title); Text(value.formatted(.number.locale(Locale(identifier: "en_US")))).monospacedDigit() }
     }
-    func priceBlock(_ title: String, _ rates: Rates) -> some View {
-        let labels = ["Input", "Cached input", "Output", "Cache write · 30 min", "Cache write · 12 h"]
+}
+
+struct AppliedPricingView: View {
+    let applied: PricingBreakdown
+    let showModel: Bool
+    private let labels = ["Ordinary input", "Cached input", "Output (including reasoning)", "Cache write · 30 min", "Cache write · 12 h"]
+    var body: some View {
+        let rates = applied.rates
         let prices = [rates.input, rates.cachedInput, rates.output, rates.cacheWriteWith30MinuteRetention, rates.cacheWriteWith12HourRetention]
-        return VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.headline)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Applied pricing: \(applied.context)").font(.headline)
+            if showModel { Text(applied.model).foregroundStyle(.secondary) }
             ForEach(labels.indices, id: \.self) { i in
                 HStack {
-                    Text(labels[i]); Spacer()
-                    Text(prices[i].map { NSDecimalNumber(decimal: $0.priceInMicrodollars / $0.microdollarsPerDollar).stringValue + " USD / 1 M tokens" } ?? "Unknown")
-                }
+                    Image(systemName: applied.used[i] ? "checkmark.square" : "square")
+                        .accessibilityLabel(applied.used[i] ? "Applied" : "Not applied")
+                    Text(labels[i])
+                    Spacer()
+                    Text(prices[i].flatMap { try? $0.cost(1_000_000) }
+                        .map { $0.formatted(.number.precision(.fractionLength(0...8)).locale(.autoupdatingCurrent)) + " USD / 1 M tokens" } ?? "Unknown")
+                }.accessibilityElement(children: .combine)
             }
+            Text("Checked means this rate contributed tokens to an available estimate. Unchecked means it was not used.")
+                .foregroundStyle(.secondary)
         }.font(.caption).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
 }

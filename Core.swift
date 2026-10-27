@@ -56,7 +56,54 @@ struct Usage: Equatable {
         var u = Usage(); u.input = a.input-b.input; u.cache = a.cache-b.cache; u.write = a.write-b.write; u.output = a.output-b.output; u.reasoning = a.reasoning-b.reasoning; return u
     }
 }
-struct Call { let model: String?; let usage: Usage }
+struct AppliedPricing { let context: String; let rates: Rates }
+struct PricingBreakdown {
+    let model: String
+    let context: String
+    let rates: Rates
+    var used: [Bool]
+    var id: String { model + "\n" + context }
+}
+struct Call {
+    let model: String?
+    let usage: Usage
+    func pricingBreakdown(_ catalog: Catalog?) -> PricingBreakdown? {
+        guard estimate(catalog).cost != nil, let model, let applied = try? appliedPricing(catalog) else { return nil }
+        return PricingBreakdown(model: model, context: applied.context, rates: applied.rates,
+                                used: [usage.input - usage.cache - usage.write > 0, usage.cache > 0, usage.output > 0, false, false])
+    }
+    func appliedPricing(_ catalog: Catalog?) throws -> AppliedPricing {
+        guard let model else { throw Failure.message("Model not recorded for request") }
+        guard let published = catalog?.pricing["standard"]?[model] else { throw Failure.message("Standard price unavailable") }
+        if let flat = published.unspecifiedContext {
+            return AppliedPricing(context: "Published rates without a context threshold", rates: flat)
+        }
+        guard published.contextSelection.status == "known", let threshold = published.contextSelection.inputTokenThreshold else {
+            throw Failure.message("Unknown context threshold")
+        }
+        let long = usage.input > threshold
+        guard let rates = long ? published.longContext : published.shortContext else { throw Failure.message("Context prices unavailable") }
+        return AppliedPricing(context: long ? "Long context" : "Short context", rates: rates)
+    }
+    func estimate(_ catalog: Catalog?) -> Estimate {
+        do {
+            let u = usage
+            guard u.numbers.allSatisfy({ $0 >= 0 }), u.input >= u.cache + u.write, u.reasoning <= u.output else {
+                throw Failure.message("Inconsistent token counters")
+            }
+            let applied = try appliedPricing(catalog)
+            // Retention is not present in Codex token counters: never guess it.
+            guard u.write == 0 else { throw Failure.message("Cache-write retention unknown") }
+            var sum: Decimal = 0
+            for (tokens, price) in [(u.input-u.cache-u.write, applied.rates.input), (u.cache, applied.rates.cachedInput), (u.output, applied.rates.output)] {
+                if tokens == 0 { continue }
+                guard let price else { throw Failure.message("Required price unknown (null)") }
+                sum += try price.cost(tokens)
+            }
+            return Estimate(cost: sum, reason: nil, context: applied.context)
+        } catch { return .unavailable(error.localizedDescription) }
+    }
+}
 struct Session: Identifiable {
     let id: String, file: URL, date: Date, title: String, models: [String], calls: [Call], usage: Usage, issues: [String]
     var guardianSource = false
@@ -74,32 +121,26 @@ struct Session: Identifiable {
         guard models.count == 1 else { return .unavailable(models.isEmpty ? "Model not recorded" : "Multiple models used") }
         guard issues.isEmpty else { return .unavailable(issues.joined(separator: " · ")) }
         guard !calls.isEmpty else { return .unavailable("No usage recorded") }
-        guard let model = catalog?.pricing["standard"]?[models[0]] else { return .unavailable("Standard price unavailable") }
         var sum: Decimal = 0
         var contexts = Set<String>()
-        do {
-            for call in calls {
-                guard call.model == models[0] else { throw Failure.message("Unknown model for a request") }
-                let u = call.usage
-                guard u.numbers.allSatisfy({ $0 >= 0 }), u.input >= u.cache + u.write, u.reasoning <= u.output else { throw Failure.message("Inconsistent token counters") }
-                let rates: Rates
-                if let flat = model.unspecifiedContext { rates = flat; contexts.insert("Published rates without a context threshold") }
-                else {
-                    guard model.contextSelection.status == "known", let threshold = model.contextSelection.inputTokenThreshold else { throw Failure.message("Unknown context threshold") }
-                    let long = u.input > threshold
-                    guard let selected = long ? model.longContext : model.shortContext else { throw Failure.message("Context prices unavailable") }
-                    rates = selected; contexts.insert(long ? "Long context" : "Short context")
-                }
-                // Retention is not present in Codex token counters: never guess it.
-                guard u.write == 0 else { throw Failure.message("Cache-write retention unknown") }
-                for (tokens, price) in [(u.input-u.cache-u.write, rates.input), (u.cache, rates.cachedInput), (u.output, rates.output)] {
-                    if tokens == 0 { continue }
-                    guard let price else { throw Failure.message("Required price unknown (null)") }
-                    sum += try price.cost(tokens)
-                }
-            }
-            return Estimate(cost: sum, reason: nil, context: contexts.sorted().joined(separator: " + "))
-        } catch { return .unavailable(error.localizedDescription) }
+        for call in calls {
+            guard call.model == models[0] else { return .unavailable("Unknown model for a request") }
+            let estimate = call.estimate(catalog)
+            guard let cost = estimate.cost else { return estimate }
+            sum += cost; contexts.insert(estimate.context)
+        }
+        return Estimate(cost: sum, reason: nil, context: contexts.sorted().joined(separator: " + "))
+    }
+    func pricingBreakdowns(_ catalog: Catalog?) -> [PricingBreakdown] {
+        var groups: [String: PricingBreakdown] = [:]
+        for call in calls {
+            guard let applied = call.pricingBreakdown(catalog) else { continue }
+            if var previous = groups[applied.id] {
+                previous.used = zip(previous.used, applied.used).map { $0 || $1 }
+                groups[applied.id] = previous
+            } else { groups[applied.id] = applied }
+        }
+        return groups.values.sorted { $0.id < $1.id }
     }
 }
 struct Estimate {
