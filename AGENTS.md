@@ -9,7 +9,7 @@ Keep Codex Costs a tiny, native, local macOS utility for understanding Codex tok
 - Prefer an explained unavailable estimate to a guessed cost. State assumptions and coverage gaps.
 - Keep changes focused. Update affected documentation; distinguish implemented behavior from proposals.
 
-Read only the relevant guides before editing; combine them for cross-cutting work:
+Before making changes, read [Git](docs/agents/git.md) and follow its branch-isolation rules. For other work, read only the relevant guides; combine them for cross-cutting tasks:
 
 | Change | Guide |
 | --- | --- |
@@ -17,15 +17,11 @@ Read only the relevant guides before editing; combine them for cross-cutting wor
 | Log parsing, token counters, pricing, totals, history | [Usage](docs/agents/usage.md) |
 | File watching, caching, concurrency, build, distribution | [Runtime](docs/agents/runtime.md) |
 | Bash scripts, terminal menus, PR testing helpers | [Bash](docs/agents/bash.md) |
+| Creating or rewriting an issue | [Issues](docs/agents/issues.md) |
+| Branches, commits, signing, rebasing, pushing | [Git](docs/agents/git.md) |
+| Creating, reviewing or updating a PR | [Pull requests](docs/agents/pull-requests.md) |
+| Identifying Codex and contributing models in a PR | [Provenance](docs/agents/provenance.md) |
 
 After code changes, run `./build.sh` and relevant checks from the guides. For documentation-only changes, check facts, links and consistency; compilation is unnecessary. Human contribution guidance is in [README.md](README.md#contributing).
 
-## Versioning
-
-- Use Semantic Versioning: MAJOR.MINOR.PATCH.
-- Each distributed artifact must have a unique public version.
-- If rebuilding produces a different artifact intended for distribution, increment at least PATCH, even when the source commit is unchanged.
-- Do not use a separate build number to distinguish distributed artifacts.
-- Display the public version without a parenthesized build number.
-- Keep any build metadata required by Apple consistent with the public version.
-- Change the version when preparing a release, not on every commit or local build.
+Change versions when preparing a release, not on every commit or local build. Each distributed artifact must have a unique public semantic version; see [Runtime and distribution](docs/agents/runtime.md#versioning).
