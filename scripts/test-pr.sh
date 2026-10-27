@@ -143,12 +143,12 @@ if [[ ${#pull_choices[@]} -eq 0 ]]; then
 fi
 
 printf '\n    %sOpen PRs%s\n\n' "$bold" "$reset"
-for index in "${!pull_choices[@]}"; do
-    printf '    %s%3s%s  %s\n\n' "$cyan$bold" "$((index + 1))" "$reset" "${pull_choices[$index]}"
+for choice in "${pull_choices[@]}"; do
+    printf '    %s%s%s\n\n' "$cyan$bold" "$choice" "$reset"
 done
 
 printf '    %s0%s    Cancel\n\n' "$yellow" "$reset"
-printf '    Enter a menu number, then press Return.\n'
+printf '    Enter a PR number (without #), then press Return.\n'
 while true; do
     printf '    %s›%s ' "$cyan$bold" "$reset"
     read -r selection || exit 0
@@ -156,15 +156,22 @@ while true; do
         printf '\n    See you next time! No changes made.\n\n'
         exit 0
     fi
-    if [[ "$selection" =~ ^[1-9][0-9]{0,5}$ ]] && ((selection <= ${#pull_choices[@]})); then
+    selected_choice=''
+    if [[ "$selection" =~ ^[1-9][0-9]*$ ]]; then
+        for choice in "${pull_choices[@]}"; do
+            if [[ "${choice%% *}" == "#$selection" ]]; then
+                selected_choice="$choice"
+                break
+            fi
+        done
+    fi
+    if [[ -n "$selected_choice" ]]; then
         break
     fi
-    printf '    %s!%s Enter a menu number, or 0 to cancel.\n' "$yellow" "$reset"
+    printf '    %s!%s Enter a listed PR number (without #), or 0 to cancel.\n' "$yellow" "$reset"
 done
 
-selected_choice="${pull_choices[$((selection - 1))]}"
-pull_number="${selected_choice%% *}"
-pull_number="${pull_number#\#}"
+pull_number="$selection"
 pull_url="$repository_url/pull/$pull_number"
 section '2 / 3 · Prepare the test merge'
 printf '    %s%s%s\n    %s\n' "$bold" "$selected_choice" "$reset" "$pull_url"
