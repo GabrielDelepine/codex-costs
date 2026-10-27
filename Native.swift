@@ -72,13 +72,14 @@ private final class EventRelay {
     init(root: String, handler: @escaping () -> Void) { self.root = root; self.handler = handler }
     func receive(paths: [String], flags: UnsafePointer<FSEventStreamEventFlags>, count: Int) {
         let sessions = root + "/sessions"
+        let archives = root + "/archived_sessions"
         let index = root + "/session_index.jsonl"
         for i in 0..<count {
             let recovery = FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped | kFSEventStreamEventFlagRootChanged)
             if flags[i] & recovery != 0 { handler(); return }
         }
         // Ignore pricing downloads, SQLite writes and other unrelated .codex files.
-        if paths.contains(where: { $0 == root || $0 == index || $0 == sessions || $0.hasPrefix(sessions + "/") }) { handler() }
+        if paths.contains(where: { $0 == root || $0 == index || $0 == sessions || $0.hasPrefix(sessions + "/") || $0 == archives || $0.hasPrefix(archives + "/") }) { handler() }
     }
 }
 final class LogWatcher {
