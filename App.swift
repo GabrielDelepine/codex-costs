@@ -410,43 +410,47 @@ struct DetailView: View {
     let catalog: Catalog?
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack { Text(session.title).font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-                HStack {
-                    Text(session.id).font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                    Button("Copy ID") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(session.id, forType: .string)
-                    }.accessibilityLabel("Copy conversation ID")
-                }
-                Text(session.models.joined(separator: ", ")).foregroundStyle(.secondary)
-                let estimate = session.estimate(catalog)
-                Text(dollars(estimate.cost)).font(.largeTitle.monospacedDigit())
-                if let reason = estimate.reason { Label(reason, systemImage: "info.circle").foregroundStyle(.orange) }
-                Grid(alignment: .leading, horizontalSpacing: 35, verticalSpacing: 9) {
-                    row("Total input (including cache)", session.usage.input)
-                    row("Cached input (read)", session.usage.cache)
-                    row("Cache writes", session.usage.write)
-                    row("Ordinary input", session.usage.input-session.usage.cache-session.usage.write)
-                    row("Output, including reasoning", session.usage.output)
-                    row("Of which reasoning (do not add)", session.usage.reasoning)
-                    row("Usable requests", Int64(session.calls.count))
-                }
-                let breakdowns = session.pricingBreakdowns(catalog)
-                if breakdowns.isEmpty {
-                    Text("No pricing applied: no request estimate is available.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    if estimate.cost == nil {
-                        Text("Pricing below applies only to available request estimates; the conversation estimate is unavailable.")
-                            .font(.caption).foregroundStyle(.secondary)
+        ScrollViewReader { scroll in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack { Text(session.title).font(.title2.bold()); Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
+                    HStack {
+                        Text(session.id).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        Button("Copy ID") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(session.id, forType: .string)
+                        }.accessibilityLabel("Copy conversation ID")
                     }
-                    ForEach(breakdowns, id: \.id) { applied in AppliedPricingView(applied: applied, showModel: session.models.count > 1) }
-                }
-                Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
-                Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
-            }.padding(24)
-        }.frame(width: 660, height: 650)
+                    Text(session.models.joined(separator: ", ")).foregroundStyle(.secondary)
+                    let estimate = session.estimate(catalog)
+                    Text(dollars(estimate.cost)).font(.largeTitle.monospacedDigit())
+                    if let reason = estimate.reason { Label(reason, systemImage: "info.circle").foregroundStyle(.orange) }
+                    Grid(alignment: .leading, horizontalSpacing: 35, verticalSpacing: 9) {
+                        row("Total input (including cache)", session.usage.input)
+                        row("Cached input (read)", session.usage.cache)
+                        row("Cache writes", session.usage.write)
+                        row("Ordinary input", session.usage.input-session.usage.cache-session.usage.write)
+                        row("Output, including reasoning", session.usage.output)
+                        row("Of which reasoning (do not add)", session.usage.reasoning)
+                        row("Usable requests", Int64(session.calls.count))
+                    }
+                    let breakdowns = session.pricingBreakdowns(catalog)
+                    if breakdowns.isEmpty {
+                        Text("No pricing applied: no request estimate is available.").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        if estimate.cost == nil {
+                            Text("Pricing below applies only to available request estimates; the conversation estimate is unavailable.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(breakdowns, id: \.id) { applied in AppliedPricingView(applied: applied, showModel: session.models.count > 1) }
+                    }
+                    Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
+                    Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
+                    Divider()
+                    RequestTable(session: session, catalog: catalog, scroll: scroll)
+                }.padding(24)
+            }.frame(width: 660, height: 650)
+        }
     }
     func row(_ title: String, _ value: Int64) -> some View {
         GridRow { Text(title); Text(value.formatted(.number.locale(Locale.autoupdatingCurrent))).monospacedDigit() }
@@ -479,5 +483,117 @@ struct AppliedPricingView: View {
             Text("Checked means this rate contributed tokens to an available estimate. Unchecked means it was not used.")
                 .foregroundStyle(.secondary)
         }.font(.caption).padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct RequestRow: Identifiable {
+    let id: Int
+    let call: Call
+    let estimate: Estimate
+    let costs: RequestCostBreakdown?
+    let context: String
+    init(index: Int, call: Call, catalog: Catalog?) {
+        id = index + 1
+        self.call = call
+        estimate = call.estimate(catalog)
+        costs = try? call.costBreakdown(catalog)
+        context = (try? call.appliedPricing(catalog).context) ?? "Unavailable"
+    }
+}
+
+struct RequestTable: View {
+    let session: Session
+    let catalog: Catalog?
+    let scroll: ScrollViewProxy
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selection: Int?
+    var body: some View {
+        let rows = session.calls.enumerated().map { RequestRow(index: $0.offset, call: $0.element, catalog: catalog) }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Individual requests").font(.headline)
+            Text("Recorded usage events, in log order. Select a row to inspect its token counters.")
+                .font(.caption).foregroundStyle(.secondary)
+            if !session.issues.isEmpty {
+                Text("Incomplete coverage: \(session.issues.joined(separator: " · ")). Only validated requests are listed.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if rows.isEmpty {
+                Text("No validated requests recorded.").foregroundStyle(.secondary)
+            } else {
+                Table(rows, selection: $selection) {
+                    TableColumn("#") { row in Text(row.id.formatted()) }.width(28)
+                    TableColumn("Time") { row in
+                        Text(row.call.timestamp.map { $0.formatted(date: .omitted, time: .standard) } ?? "—")
+                            .help(row.call.timestamp.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "Timestamp not recorded")
+                    }.width(80)
+                    TableColumn("Model") { row in
+                        Text(row.call.model ?? "Not recorded").lineLimit(1).help(row.call.model ?? "Model not recorded")
+                    }.width(min: 100, ideal: 130, max: .infinity)
+                    TableColumn("Context") { row in
+                        Text(row.context == "Published rates without a context threshold" ? "Unspecified" : row.context)
+                            .lineLimit(1).help(row.context)
+                    }.width(105)
+                    TableColumn("Estimated cost") { row in
+                        Text(dollars(row.estimate.cost)).help(row.estimate.reason ?? "Standard API equivalent")
+                    }.width(100)
+                }
+                .monospacedDigit()
+                .frame(height: CGFloat(min(rows.count, 7)) * 28 + 32)
+                .accessibilityLabel("Individual requests")
+                if let selected = rows.first(where: { $0.id == selection }) {
+                    RequestDetails(row: selected)
+                        .id("request-details")
+                        .task(id: selected.id) {
+                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                                scroll.scrollTo("request-details", anchor: .bottom)
+                            }
+                        }
+                }
+            }
+            Text("Times are usage-event timestamps, not request start times. Input includes cache; output includes reasoning. Repeated unchanged events are excluded.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct RequestDetails: View {
+    let row: RequestRow
+    var body: some View {
+        let usage = row.call.usage
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Request \(row.id)").font(.subheadline.bold())
+            Text(row.call.timestamp.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "Timestamp not recorded")
+                .foregroundStyle(.secondary)
+            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 5) {
+                GridRow { Text("Total input (including cache)"); Text(row.call.usage.input.formatted()) }
+                GridRow { Text("Cached input (read)"); Text(row.call.usage.cache.formatted()) }
+                GridRow { Text("Cache writes"); Text(row.call.usage.write.formatted()) }
+                GridRow { Text("Input excluding cache"); Text(usage.isConsistent ? (usage.input-usage.cache-usage.write).formatted() : "—") }
+                GridRow {
+                    Text("Cached share of total input")
+                    Text(usage.isConsistent && usage.input > 0
+                         ? (Double(usage.cache) / Double(usage.input)).formatted(.percent.precision(.fractionLength(1)).locale(.autoupdatingCurrent)) : "—")
+                }
+                GridRow { Text("Output (including reasoning)"); Text(row.call.usage.output.formatted()) }
+                GridRow { Text("Of which reasoning (do not add)"); Text(usage.reasoning.formatted()) }
+                GridRow { Text("Output excluding reasoning"); Text(usage.isConsistent ? (usage.output-usage.reasoning).formatted() : "—") }
+            }.monospacedDigit()
+            Divider()
+            Text("Estimated cost by component").font(.subheadline.bold())
+            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 5) {
+                GridRow { Text("Input excluding cache"); Text(dollars(row.costs?.ordinaryInput)) }
+                GridRow { Text("Cached input (read)"); Text(dollars(row.costs?.cachedInput)) }
+                GridRow { Text("Output (including reasoning)"); Text(dollars(row.costs?.output)) }
+                if usage.write > 0 { GridRow { Text("Cache writes"); Text("Unavailable: retention unknown") } }
+                GridRow { Text("Total").bold(); Text(dollars(row.estimate.cost)).bold() }
+            }.monospacedDigit()
+            Text("Components use the request’s context tier and current Standard rates. Rounded components may not sum to the displayed total.")
+                .foregroundStyle(.secondary)
+            if let reason = row.estimate.reason { Text(reason).foregroundStyle(.orange) }
+        }
+        .font(.caption)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
 }
