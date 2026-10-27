@@ -150,9 +150,9 @@ Model aliases are not guessed. A final JSON line still being written is ignored 
 
 ### Local files determine what is visible
 
-The app reads `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and titles from `~/.codex/session_index.jsonl`. It uses the default location and does not currently offer a custom Codex-home setting.
+The app reads active `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` files, flat archived `~/.codex/archived_sessions/rollout-*.jsonl` files, and titles from `~/.codex/session_index.jsonl`. It uses the default location and does not currently offer a custom Codex-home setting.
 
-Project-associated and projectless sessions can both appear when they are recorded there. This is not a guarantee of coverage across all Codex surfaces, devices or accounts. Archived sessions in other directories are not scanned.
+Project-associated and projectless sessions can both appear when they are recorded there. This is not a guarantee of coverage across all Codex surfaces, devices or accounts. Archived rollouts use their original local creation date encoded in the filename, rather than their archive date. Duplicate conversation IDs are counted once, preferring an active copy over an archived copy. The first session metadata entry identifies a rollout; parent metadata copied into a fork's history does not replace its identity. Other storage locations are not scanned.
 
 The log format is internal to Codex and may change. The app cannot reliably estimate usage that its source files do not expose.
 
@@ -166,7 +166,7 @@ Guardian Review sessions are excluded from the table, counts, totals and calenda
 
 ### Potentially missing conversations and limited history
 
-There are reports of potentially missing conversations and different amounts of local history between machines. The cause has not been established; automatic deletion by Codex should not be assumed without evidence.
+There are reports of potentially missing conversations and different amounts of local history between machines. Including archived rollout files addresses one possible source of missing rows; it does not establish the cause of those reports or differences between machines. Automatic deletion by Codex should not be assumed without evidence.
 
 Codex Costs currently keeps parsed usage in memory, not in a permanent conversation archive. If a source file disappears, its row is removed on a subsequent check. Running the app does not currently preserve a complete history after those files are gone.
 
@@ -195,7 +195,7 @@ There is no app account, API key, analytics service or local backend. The normal
 
 ## How updates work
 
-Native **FSEvents** notifications watch the `.codex` tree and filter for session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
+Native **FSEvents** notifications watch the `.codex` tree and filter for active session, archived session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
 
 The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted files are removed, and title-index changes update titles without rereading unchanged session contents.
 

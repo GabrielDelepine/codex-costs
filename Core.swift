@@ -178,12 +178,18 @@ enum Logs {
         }
         return false
     }
+    static func creationDay(_ file: URL) -> Date? {
+        let name = file.lastPathComponent
+        guard name.hasPrefix("rollout-"), name.hasSuffix(".jsonl") else { return nil }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"; f.isLenient = false
+        return f.date(from: String(name.dropFirst(8).prefix(10)))
+    }
     static func read(_ url: URL, titles: [String: String]) throws -> Session {
         let data = try Data(contentsOf: url)
         guard let text = String(data: data, encoding: .utf8) else { throw Failure.message("Unreadable log") }
         let lines = text.components(separatedBy: "\n")
         var id = "", model: String?, models: [String] = [], calls: [Call] = [], previous = Usage(), issues = Set<String>()
-        var date = Date.distantPast, guardian = false
+        var date = Date.distantPast, guardian = false, hasSessionMeta = false
         // Rollout filenames encode the local creation time, not UTC.
         let name = url.deletingPathExtension().lastPathComponent
         if name.hasPrefix("rollout-"), name.count >= 64 {
@@ -196,7 +202,9 @@ enum Logs {
                 issues.insert("Invalid JSON line"); continue
             }
             let p = event["payload"] as? [String: Any] ?? [:]
-            if event["type"] as? String == "session_meta" {
+            if event["type"] as? String == "session_meta", !hasSessionMeta {
+                // Fork history may contain parent metadata; the first entry owns this rollout.
+                hasSessionMeta = true
                 guardian = guardian || guardianSource(p)
                 id = p["id"] as? String ?? id
                 if date == .distantPast, let stamp = p["timestamp"] as? String { date = parseDate(stamp) ?? date }
@@ -271,8 +279,31 @@ actor SessionCache {
     private var lastErrors: [String] = []
     private var dayDirectories: [URL: (stamp: Stamp, files: [URL])] = [:]
     private var guardianHeaders: [URL: (stamp: Stamp, guardian: Bool)] = [:]
-    init(root: URL = Logs.root) { self.root = root }
-    // Cache directory listings and bounded classification headers independently of usage parsing.
+    private var archiveStamp: Stamp?
+    private var archiveFiles: [URL] = []
+    init(root: URL = Logs.root) { self.root = root.resolvingSymlinksInPath() }
+    private func archivedFiles() throws -> [URL] {
+        let folder = root.appendingPathComponent("archived_sessions")
+        guard FileManager.default.fileExists(atPath: folder.path) else {
+            archiveStamp = nil; archiveFiles = []; return []
+        }
+        let stamp = try Stamp(folder)
+        if archiveStamp != stamp {
+            archiveFiles = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+                .filter { Logs.creationDay($0) != nil }
+            archiveStamp = stamp
+        }
+        return archiveFiles
+    }
+    // Cache listings and bounded headers independently of usage parsing.
+    private func calendarConversation(_ file: URL) -> Bool {
+        guard let stamp = try? Stamp(file) else { return false }
+        if guardianHeaders[file]?.stamp != stamp {
+            guardianHeaders[file] = (stamp, Logs.guardianHeader(file))
+        }
+        let id = String(file.deletingPathExtension().lastPathComponent.suffix(36))
+        return guardianHeaders[file]?.guardian != true && titles[id]?.caseInsensitiveCompare("Guardian review") != .orderedSame
+    }
     func conversationDays() -> Set<Date> {
         let fm = FileManager.default
         func directories(_ url: URL) -> [URL] {
@@ -297,15 +328,7 @@ actor SessionCache {
                     var hasConversations = false
                     for file in dayDirectories[day]?.files ?? [] {
                         seenFiles.insert(file)
-                        guard let stamp = try? Stamp(file) else { continue }
-                        if guardianHeaders[file]?.stamp != stamp {
-                            guardianHeaders[file] = (stamp, Logs.guardianHeader(file))
-                        }
-                        let id = String(file.deletingPathExtension().lastPathComponent.suffix(36))
-                        if guardianHeaders[file]?.guardian != true,
-                           titles[id]?.caseInsensitiveCompare("Guardian review") != .orderedSame {
-                            hasConversations = true
-                        }
+                        if calendarConversation(file) { hasConversations = true }
                     }
                     if hasConversations {
                         let text = year.lastPathComponent + "/" + month.lastPathComponent + "/" + day.lastPathComponent
@@ -315,6 +338,12 @@ actor SessionCache {
             }
         }
         for url in Array(dayDirectories.keys) where !seen.contains(url) { dayDirectories.removeValue(forKey: url) }
+        for file in (try? archivedFiles()) ?? [] {
+            seenFiles.insert(file)
+            if calendarConversation(file), let day = Logs.creationDay(file) {
+                result.insert(Calendar.current.startOfDay(for: day))
+            }
+        }
         for url in Array(guardianHeaders.keys) where !seenFiles.contains(url) { guardianHeaders.removeValue(forKey: url) }
         return result
     }
@@ -354,6 +383,16 @@ actor SessionCache {
                 if fm.fileExists(atPath: folder.path) { errors.append("Cannot list logs in " + folder.path) }
             }
         }
+        // Archived rollouts are flat; their filenames retain the original local creation day.
+        let selectedFolders = Set(folders.map { $0.resolvingSymlinksInPath().path })
+        do {
+            for file in try archivedFiles() {
+                guard let day = Logs.creationDay(file),
+                      let folder = DayRange(day, day).folders(root: root).first,
+                      selectedFolders.contains(folder.path) else { continue }
+                files.insert(file)
+            }
+        } catch { errors.append("Cannot list archived session logs") }
         for url in Array(entries.keys) where !files.contains(url) { entries.removeValue(forKey: url); changed = true }
         for url in files.sorted(by: { $0.path < $1.path }) {
             do {
@@ -371,8 +410,15 @@ actor SessionCache {
         }
         changed = changed || errors != lastErrors
         lastErrors = errors
-        var sessions: [Session] = []
-        for entry in entries.values {
+        var sessions: [Session] = [], seenIDs = Set<String>()
+        let ordered = entries.values.sorted {
+            let a = $0.session.file.path, b = $1.session.file.path
+            let aArchived = $0.session.file.deletingLastPathComponent().lastPathComponent == "archived_sessions"
+            let bArchived = $1.session.file.deletingLastPathComponent().lastPathComponent == "archived_sessions"
+            if aArchived != bArchived { return !aArchived }
+            return a < b
+        }
+        for entry in ordered where seenIDs.insert(entry.session.id).inserted {
             let title = titles[entry.session.id] ?? "Untitled"
             let session = entry.session.titled(title)
             if !session.isGuardianReview { sessions.append(session) }
