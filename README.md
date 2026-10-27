@@ -174,7 +174,7 @@ A future local history feature would also need to explain gaps: conversations cr
 
 ### Date and time formatting
 
-Interface text is English, and conversation titles are preserved. The current implementation also forces English date and number formatting, including AM/PM times. Respecting macOS date and time preferences independently of the interface language is a known improvement to make. Times use the Mac's local time zone.
+Interface text stays English and conversation titles are preserved. Displayed dates, times, calendar labels, token counts and numeric amounts use the Mac’s regional preferences, including its clock format and local time zone. The API’s `currency` field is validated as USD. Estimated amounts keep a fixed `$` symbol, and detailed rates display the API currency code; regional formatting does not rename or convert the currency. Log filenames and wire timestamps retain their fixed source formats.
 
 ### Excluded charges
 

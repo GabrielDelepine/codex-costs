@@ -119,7 +119,7 @@ import Observation
     var body: some Scene {
         WindowGroup {
             MainView(store: store)
-                .environment(\.locale, Locale(identifier: "en_US"))
+                .environment(\.locale, Locale.autoupdatingCurrent)
                 .frame(minWidth: 1020, minHeight: 520)
                 .task { await store.run() }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.wake() }
@@ -271,7 +271,7 @@ struct MainView: View {
                 HStack {
                     Link(destination: URL(string: "https://tools.pwa.ovh/openai-pricing")!) {
                         if let date = store.catalog.flatMap({ parseDate($0.fetchedAt) }) {
-                            Text("Prices retrieved \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute().second().locale(Locale(identifier: "en_US")))) (via tools.pwa.ovh) ↗")
+                            Text("Prices retrieved \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute().second().locale(Locale.autoupdatingCurrent))) (via tools.pwa.ovh) ↗")
                         } else { Text("No prices available (via tools.pwa.ovh) ↗") }
                     }
                     Spacer()
@@ -332,7 +332,7 @@ struct DetailView: View {
         }.frame(width: 660, height: 650)
     }
     func row(_ title: String, _ value: Int64) -> some View {
-        GridRow { Text(title); Text(value.formatted(.number.locale(Locale(identifier: "en_US")))).monospacedDigit() }
+        GridRow { Text(title); Text(value.formatted(.number.locale(Locale.autoupdatingCurrent))).monospacedDigit() }
     }
 }
 
@@ -352,8 +352,11 @@ struct AppliedPricingView: View {
                         .accessibilityLabel(applied.used[i] ? "Applied" : "Not applied")
                     Text(labels[i])
                     Spacer()
-                    Text(prices[i].flatMap { try? $0.cost(1_000_000) }
-                        .map { $0.formatted(.number.precision(.fractionLength(0...8)).locale(.autoupdatingCurrent)) + " USD / 1 M tokens" } ?? "Unknown")
+                    Text(prices[i].flatMap { price in
+                        (try? price.cost(1_000_000)).map {
+                            $0.formatted(.number.precision(.fractionLength(0...8)).locale(.autoupdatingCurrent)) + " " + price.currency + " / 1 M tokens"
+                        }
+                    } ?? "Unknown")
                 }.accessibilityElement(children: .combine)
             }
             Text("Checked means this rate contributed tokens to an available estimate. Unchecked means it was not used.")

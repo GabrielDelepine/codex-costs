@@ -149,8 +149,8 @@ struct Estimate {
 }
 func dollars(_ value: Decimal?) -> String {
     guard let value else { return "—" }
-    let f = NumberFormatter(); f.locale = Locale(identifier: "en_US"); f.numberStyle = .decimal; f.minimumFractionDigits = 4; f.maximumFractionDigits = 4
-    return "$" + (f.string(from: value as NSDecimalNumber) ?? "—")
+    let f = NumberFormatter(); f.locale = .autoupdatingCurrent; f.numberStyle = .decimal; f.minimumFractionDigits = 4; f.maximumFractionDigits = 4
+    return f.string(from: value as NSDecimalNumber).map { "$" + $0 } ?? "—"
 }
 struct ScanResult {
     let sessions: [Session]
@@ -231,7 +231,7 @@ struct DayRange: Equatable {
     func folders(root: URL) -> [URL] {
         let calendar = Calendar.current
         let format = DateFormatter(); format.locale = Locale(identifier: "en_US_POSIX")
-        format.calendar = calendar; format.dateFormat = "yyyy/MM/dd"
+        format.calendar = Calendar(identifier: .gregorian); format.dateFormat = "yyyy/MM/dd"
         var day = start, result: [URL] = []
         while day <= end {
             result.append(root.appendingPathComponent("sessions/" + format.string(from: day)))
@@ -241,7 +241,7 @@ struct DayRange: Equatable {
         return result
     }
     var label: String {
-        let f = DateFormatter(); f.locale = Locale(identifier: "en_US"); f.dateFormat = "MMM d, yyyy"
+        let f = DateFormatter(); f.locale = .autoupdatingCurrent; f.dateStyle = .medium; f.timeStyle = .none
         return start == end ? f.string(from: start) : f.string(from: start) + " – " + f.string(from: end)
     }
 }
