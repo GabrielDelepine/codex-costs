@@ -43,7 +43,7 @@ It is designed around **local Codex session data**. If you need exact billing, a
 
 The project deliberately stays small:
 
-- **Native macOS interface.** A table, a compact calendar and an info panel, built with SwiftUI and AppKit.
+- **Native macOS interface.** A table, a compact calendar and an info panel, built with SwiftUI and AppKit. The window has a 640-point minimum width for side-by-side use. Below 900 points, date and time move beneath conversation titles, and the search and pricing status use separate rows. Conversation titles and model lists stay on one line and truncate with an ellipsis; hovering reveals their full text. The model column uses 145 points, and the estimated-cost column uses 90 points to retain its full heading while leaving more room for titles.
 - **No third-party dependencies.** No Electron runtime, package installation or local service to maintain.
 - **No API key required.** Usage comes from local logs; published prices come from a JSON endpoint.
 - **Private conversation data.** Titles, IDs, prompts and token counters are not sent to the pricing service.
