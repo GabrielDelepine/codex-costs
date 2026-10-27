@@ -215,6 +215,10 @@ Use `./build.sh` to compile without launching. The script builds for the current
 
 The script uses Apple's `swiftc`, `sips`, `iconutil` and `codesign`. Generated files stay under the ignored `build/` directory; Swift's module cache is outside the repository.
 
+The About window shows the public semantic version, a GitHub link to the source commit, its committer date, and the build date and time using macOS formatting preferences and the local time zone. These timestamps are recorded during compilation. Builds with local changes identify the commit as the base source; source metadata is unavailable when building without Git history.
+
+Versions follow `MAJOR.MINOR.PATCH` and are set in `build.sh`. Each distributed artifact must have a unique public version: rebuilding a different artifact for distribution requires at least a patch increment, even from the same commit. Local builds do not automatically change the version. Both Apple bundle version fields use the public version; there is no separate displayed build counter.
+
 Release packaging is separate from this local build command. A universal release must contain both architectures. Version metadata, signing status and architecture labels should match the actual package. Generate a release checksum only after the final DMG has been produced, and regenerate it if the asset changes.
 
 ## Project structure

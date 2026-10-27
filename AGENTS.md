@@ -19,3 +19,13 @@ Read only the relevant guides before editing; combine them for cross-cutting wor
 | Bash scripts, terminal menus, PR testing helpers | [Bash](docs/agents/bash.md) |
 
 After code changes, run `./build.sh` and relevant checks from the guides. For documentation-only changes, check facts, links and consistency; compilation is unnecessary. Human contribution guidance is in [README.md](README.md#contributing).
+
+## Versioning
+
+- Use Semantic Versioning: MAJOR.MINOR.PATCH.
+- Each distributed artifact must have a unique public version.
+- If rebuilding produces a different artifact intended for distribution, increment at least PATCH, even when the source commit is unchanged.
+- Do not use a separate build number to distinguish distributed artifacts.
+- Display the public version without a parenthesized build number.
+- Keep any build metadata required by Apple consistent with the public version.
+- Change the version when preparing a release, not on every commit or local build.
