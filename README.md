@@ -262,7 +262,7 @@ There is currently no committed automated test suite. Do not describe a build or
 
 ### Test an open pull request
 
-Run `./scripts/test-pr.sh` from a clean checkout in a macOS terminal. It lists all open PRs using GitHub’s public API, without a token, GitHub CLI, `gum` or an extra package. Choose one PR from the numbered menu, or enter `0` to cancel. The terminal view uses colored headings and numbered stages; set `NO_COLOR=1` to disable styling. Redirected output and `TERM=dumb` remain plain text. Anonymous API rate limits apply.
+Run `./scripts/test-pr.sh` from a clean checkout in a macOS terminal. It lists all open PRs using GitHub’s public API, without a token, GitHub CLI, `gum` or an extra package. Enter the GitHub number of a listed PR (for example, `21` for `#21`), or enter `0` to cancel. The terminal view uses colored headings and numbered stages; set `NO_COLOR=1` to disable styling. Redirected output and `TERM=dumb` remain plain text. Anonymous API rate limits apply.
 
 The script refuses staged, unstaged and untracked files, then checks that the chosen PR is open and can be merged. It fetches `refs/pull/NUMBER/merge` from origin using a temporary public HTTPS URL, verifies GitHub’s test merge SHA, and runs `git switch --detach FETCH_HEAD`. This tests the PR combined with its target branch on GitHub at that moment, independently of your local `main`; later changes can produce a different result. It does not merge anything on GitHub.
 
