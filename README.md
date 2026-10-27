@@ -195,13 +195,21 @@ There is no app account, API key, analytics service or local backend. The normal
 
 ## How updates work
 
-Native **FSEvents** notifications watch the `.codex` tree and filter for active session, archived session and title-index changes. Event bursts are batched and debounced; unrelated writes, such as SQLite changes, are ignored.
+Native **FSEvents** notifications watch the `.codex` tree and filter for active session, archived session and title-index changes. macOS batches events before notifying the app; unrelated writes, such as SQLite changes, are ignored. There is no additional application debounce, so continuous writes never reset a waiting refresh.
 
-The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed, deleted files are removed, and title-index changes update titles without rereading unchanged session contents.
+| Window state | FSEvents latency | Application delay | Refresh behavior |
+| --- | --- | --- | --- |
+| At least one window partly visible, even without keyboard focus | 400 ms | None | Scan on each relevant batch; target an updated display within 2 seconds of a relevant write, including continuous writes. |
+| All windows hidden, minimized, closed or fully obscured | 30 seconds | None | Check once on transition, then scan on each relevant batch delivered by macOS. |
+| A window becomes visible again | Restored to 400 ms | None | Check logs immediately, without waiting for the next event. |
+
+These are scheduling targets, not hard real-time bounds: system delivery, sleep, suspension and unusually long scans can delay display updates. The 2-second target assumes native watching works and the selected logs can be processed within that budget. The hidden-window latency is a 30-second request to macOS, not a strict minimum interval or a wait after the last write; the system may deliver batches earlier. Each visibility transition starts a new stream before checking logs, so pending writes are covered without replaying historical notifications. Already queued callbacks may cause a harmless cached recheck. Scans are serialized, with a follow-up scan when changes arrive during an active scan.
+
+The app caches each parsed session with its file size, modification date, creation date and inode. New or changed logs are reread **in full**. Unchanged logs are not reparsed or re-estimated, deleted files are removed, and title-index changes update titles without rereading unchanged session contents. A new pricing catalogue recalculates all selected estimates.
 
 Calendar availability uses cached directory listings and bounded session headers to exclude internal Guardian Reviews. Usage counters outside the selected range are not parsed. Header classification is cached by file metadata and title-index changes are applied without rereading unchanged logs.
 
-A recovery check runs every 60 seconds, on app activation and after waking the Mac. It covers missed events, missing day folders and midnight changes, and remains available when native watching cannot start. File parsing runs away from the UI thread, and pricing downloads are scheduled independently of log updates.
+A recovery check runs after each 60-second recovery wait, on visibility transitions and after waking the Mac. It covers missed events, missing day folders and midnight changes, and retries native watching when it cannot start. File parsing runs away from the UI thread, and pricing downloads are scheduled independently of log updates.
 
 ## Build from source
 

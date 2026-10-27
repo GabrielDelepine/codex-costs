@@ -157,6 +157,7 @@ struct ScanResult {
     let errors: [String]
     let changed: Bool
     let filesRead: Int
+    let updatedSessionIDs: Set<String>
 }
 enum Logs {
     static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
@@ -350,6 +351,7 @@ actor SessionCache {
     func scan(folders: [URL]) -> ScanResult {
         let fm = FileManager.default
         var changed = folders != lastFolders, reads = 0, errors: [String] = []
+        var updatedSessionIDs = Set<String>()
         lastFolders = folders
         let index = root.appendingPathComponent("session_index.jsonl")
         if fm.fileExists(atPath: index.path) {
@@ -393,18 +395,26 @@ actor SessionCache {
                 files.insert(file)
             }
         } catch { errors.append("Cannot list archived session logs") }
-        for url in Array(entries.keys) where !files.contains(url) { entries.removeValue(forKey: url); changed = true }
+        for url in Array(entries.keys) where !files.contains(url) {
+            // Removing the preferred copy can expose a cached archive with different usage.
+            if let removed = entries.removeValue(forKey: url) { updatedSessionIDs.insert(removed.session.id) }
+            changed = true
+        }
         for url in files.sorted(by: { $0.path < $1.path }) {
             do {
                 let stamp = try Stamp(url)
                 if entries[url]?.stamp != stamp {
                     let session = try Logs.read(url, titles: [:])
                     entries[url] = Entry(stamp: stamp, session: session)
+                    updatedSessionIDs.insert(session.id)
                     reads += 1; changed = true
                 }
             } catch {
                 // Keep no stale estimated cost for a file that can no longer be read.
-                if entries.removeValue(forKey: url) != nil { changed = true }
+                if let removed = entries.removeValue(forKey: url) {
+                    updatedSessionIDs.insert(removed.session.id)
+                    changed = true
+                }
                 errors.append("Cannot read log: " + url.lastPathComponent)
             }
         }
@@ -427,6 +437,6 @@ actor SessionCache {
             if a.date == b.date { return a.id < b.id }
             return a.date < b.date
         }
-        return ScanResult(sessions: sessions, errors: errors, changed: changed, filesRead: reads)
+        return ScanResult(sessions: sessions, errors: errors, changed: changed, filesRead: reads, updatedSessionIDs: updatedSessionIDs)
     }
 }
