@@ -195,6 +195,8 @@ There is no app account, API key, analytics service or local backend. The normal
 
 ## How updates work
 
+**Auto-select today** selects the current day immediately and follows date changes at the next log check, including when a window becomes visible again or the Mac wakes. An independent recovery loop waits 60 seconds between checks; this is a fallback, not the live-update interval or a strict midnight deadline. Sleep, suspension and scan duration can delay a check. It starts enabled on every app launch. Unchecking it keeps the selected dates fixed; applying a calendar selection also turns it off, while Cancel preserves the current mode and dates. Live usage updates work for any selected date range independently of this option.
+
 Native **FSEvents** notifications watch the `.codex` tree and filter for active session, archived session and title-index changes. macOS batches events before notifying the app; unrelated writes, such as SQLite changes, are ignored. There is no additional application debounce, so continuous writes never reset a waiting refresh.
 
 | Window state | FSEvents latency | Application delay | Refresh behavior |

@@ -288,9 +288,10 @@ struct MainView: View {
                         }
                     }.padding(14).frame(width: 200)
                 }
-                Toggle("Follow today", isOn: Binding(get: { store.followToday }, set: { value in
+                Toggle("Auto-select today", isOn: Binding(get: { store.followToday }, set: { value in
                     if value { store.today() } else { store.followToday = false }
                 })).toggleStyle(.checkbox)
+                    .help("Selects today now and follows day changes at the next log check, including when a window becomes visible again or the Mac wakes. Choosing dates turns this off. Enabled on each app launch. Usage updates in either mode.")
                 Spacer()
                 TextField("Search title, ID or model", text: $search).textFieldStyle(.roundedBorder).frame(width: 240)
                 Button {
@@ -299,6 +300,9 @@ struct MainView: View {
                 } label: { Image(systemName: "arrow.clockwise") }.help("Check logs and refresh prices")
                     .disabled(store.fetching)
             }.padding(.horizontal, 20).padding(.bottom, 14)
+            Text("Usage updates for any selected dates. Auto-select today follows the current day; choosing dates turns it off. Enabled on each launch.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20).padding(.bottom, 10)
             Divider()
             Table(filtered, selection: $selection) {
                 TableColumn("Date") { s in Text(s.date, format: .dateTime.day().month().year()).monospacedDigit() }.width(100)
