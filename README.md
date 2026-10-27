@@ -190,10 +190,23 @@ Codex Costs reads session logs and the title index without changing them. It doe
 | Parsed session counters and file metadata | App memory                                              | No permanent conversation archive       |
 | Last valid pricing catalogue              | `~/Library/Application Support/CodexCosts/pricing.json` | Saved locally                           |
 | Last successful pricing download time     | macOS user defaults                                     | Saved locally                           |
+| App release metadata, check time and automatic-check preference | macOS user defaults | Saved locally; no conversation data |
 
-There is no app account, API key, analytics service or local backend. The normal background network request is to the pricing endpoint.
+There is no app account, API key, analytics service or local backend. Background network requests retrieve prices from the pricing endpoint and public release metadata from GitHub. Release checks send no conversation data and require no GitHub account or token.
 
 ## How updates work
+
+### Application releases
+
+Choose **Codex Costs → Check for Updates…** to check GitHub's latest public stable release. Commits, drafts and prereleases are not used. Versions are compared as `MAJOR.MINOR.PATCH` (release tags may start with `v`), so a local build newer than the latest release is not offered a downgrade. A failed request is reported separately from an up-to-date result.
+
+When an update is available, the main window shows a clickable **Update available** indicator. The indicator opens the saved release details, even after a failed background check. The update window compares your version and the latest version, with publication dates formatted using macOS regional preferences. Dates come from the corresponding GitHub releases and are saved locally; **Release date unavailable** is shown when the installed build cannot be matched to a release. Commit and compilation dates are never substituted.
+
+**Later** closes the update window and leaves the indicator available. **View Release on GitHub** opens that specific release in your browser, where you can read the notes and download the DMG. The app does not download, install or relaunch itself. The [installation instructions](#download-and-install) and ad-hoc signing limitations still apply.
+
+**Automatically Check for Updates** is enabled by default and can be changed in the Codex Costs menu or update window. A successful check schedules the next automatic check after 72 hours. Checks run only while the app is running; an overdue check runs after reopening, activation or wake, or at the next recovery check. Failures are silent in the background and retry after one hour while running; restarting also permits a retry. Automatic checks never open a window or take focus. Previously retrieved update metadata remains available after a network failure. Manual checks bypass the schedule and work even when automatic checking is disabled. Disabling automatic checks preserves the existing indicator and does not cancel an in-flight request.
+
+### Local usage and pricing
 
 **Auto-select today** selects the current day immediately and follows date changes at the next log check, including when a window becomes visible again or the Mac wakes. An independent recovery loop waits 60 seconds between checks; this is a fallback, not the live-update interval or a strict midnight deadline. Sleep, suspension and scan duration can delay a check. It starts enabled on every app launch. Unchecking it keeps the selected dates fixed; applying a calendar selection also turns it off, while Cancel preserves the current mode and dates. Live usage updates work for any selected date range independently of this option.
 
@@ -240,6 +253,8 @@ Release packaging is separate from this local build command. A universal release
 | `App.swift`          | Interface, app state, pricing downloads and refresh scheduling               |
 | `Core.swift`         | Log parsing, per-file cache, date ranges and cost calculation                |
 | `Native.swift`       | Calendar with per-day availability and native filesystem notifications       |
+| `Updates.swift`      | GitHub release checks, scheduling, saved metadata and native update window    |
+| `Tests/UpdatesChecks.swift` | Isolated release-check fixtures, version comparison and scheduling checks |
 | `Assets/AppIcon.png` | Selected Code icon, generated with OpenAI ImageGen                           |
 | `build.sh`           | Compilation, icon generation, bundle creation and local signing              |
 | `AGENTS.md`          | Short shared instructions and task-specific reading routes for coding agents |
@@ -274,7 +289,16 @@ Keep each change focused on an issue or clearly described problem. Explain the r
 - **Parsing, prices or caching:** use focused synthetic fixtures for the changed logic. Do not modify real Codex logs to create test cases.
 - **Documentation-only changes:** check facts, links and Markdown structure; no rebuild is needed.
 
-There is currently no committed automated test suite. Do not describe a build or an ad-hoc check as a full test-suite run.
+Run the focused release-update checks with Apple's Swift compiler (no live network or personal logs are used):
+
+```sh
+update_check_dir=$(mktemp -d)
+xcrun swiftc -swift-version 5 -parse-as-library Updates.swift Tests/UpdatesChecks.swift -o "$update_check_dir/updates-checks"
+"$update_check_dir/updates-checks"
+rm -r "$update_check_dir"
+```
+
+These focused checks do not cover the full app or replace manual UI testing. For release updates, also check the menu, progress, current/newer/available versions, unavailable dates, failure/retry, the automatic-check toggle and the release link in a running app.
 
 ### Test an open pull request
 

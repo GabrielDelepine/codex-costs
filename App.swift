@@ -3,6 +3,7 @@ import AppKit
 import Observation
 
 @MainActor @Observable final class Store {
+    let releases = ReleaseUpdates()
     var range = DayRange.today
     var followToday = true
     var availableDays: Set<Date> = []
@@ -122,6 +123,7 @@ import Observation
     func wake() {
         Task { await scan() }
         Task { await refreshPrices() }
+        Task { await releases.check() }
     }
     func start() {
         guard monitoring == nil else { return }
@@ -152,12 +154,14 @@ import Observation
         }
         await scan()
         Task { await refreshPrices() }
+        Task { await releases.check() }
         // Recovery for missed events, sleep, missing folders, midnight and pricing deadlines.
         while !Task.isCancelled {
             do { try await Task.sleep(for: .seconds(60)) } catch { return }
             if !watching { configureWatcher() }
             await scan()
             Task { await refreshPrices() }
+            Task { await releases.check() }
         }
     }
 }
@@ -176,8 +180,22 @@ import Observation
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Codex Costs") { openWindow(id: "about") }
+                Button(store.releases.checking ? "Checking for Updates…" : "Check for Updates…") {
+                    openWindow(id: "updates")
+                    Task { await store.releases.check(manual: true) }
+                }.disabled(store.releases.checking)
+                Toggle("Automatically Check for Updates", isOn: Binding(
+                    get: { store.releases.automaticallyChecks },
+                    set: { enabled in
+                        store.releases.automaticallyChecks = enabled
+                        if enabled { Task { await store.releases.check() } }
+                    }))
             }
         }
+        Window("Software Update", id: "updates") {
+            UpdatesView(updates: store.releases)
+        }
+        .windowResizability(.contentSize)
         Window("About Codex Costs", id: "about") {
             AboutView()
         }
@@ -246,6 +264,7 @@ struct AboutView: View {
 }
 
 struct MainView: View {
+    @Environment(\.openWindow) private var openWindow
     @Bindable var store: Store
     @State private var selection: String?
     @State private var detail: Session?
@@ -261,7 +280,19 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Codex Costs").font(.title2.bold())
+                    HStack(spacing: 12) {
+                        Text("Codex Costs").font(.title2.bold())
+                        if store.releases.updateAvailable {
+                            Button {
+                                store.releases.showAvailableRelease()
+                                openWindow(id: "updates")
+                            } label: {
+                                Label("Update available", systemImage: "arrow.up.circle.fill")
+                            }
+                            .buttonStyle(.borderless).foregroundStyle(Color.accentColor)
+                            .help("View the available Codex Costs release")
+                        }
+                    }
                     Text("Token estimates · Current Standard API rates · USD").foregroundStyle(.secondary)
                 }
                 Spacer()
