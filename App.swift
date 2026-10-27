@@ -173,7 +173,7 @@ import Observation
         WindowGroup {
             MainView(store: store)
                 .environment(\.locale, Locale.autoupdatingCurrent)
-                .frame(minWidth: 1020, minHeight: 520)
+                .frame(minWidth: 640, minHeight: 520)
                 .task { store.start() }
                 .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true); store.updateWindowVisibility() }
         }.defaultSize(width: 1220, height: 700)
@@ -277,7 +277,16 @@ struct MainView: View {
     var total: Decimal { filtered.reduce(0) { $0 + (store.estimate($1).cost ?? 0) } }
     var unavailable: Int { filtered.filter { store.estimate($0).cost == nil }.count }
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        GeometryReader { geometry in content(compact: geometry.size.width < 900) }
+            .sheet(item: $detail) { session in
+                DetailView(session: store.sessions.first(where: { $0.id == session.id }) ?? session, catalog: store.catalog)
+            }
+    }
+    private func content(compact: Bool) -> some View {
+        let controlsLayout = compact
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+            : AnyLayout(HStackLayout())
+        return VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 12) {
@@ -301,62 +310,64 @@ struct MainView: View {
                     Text("\(filtered.count - unavailable) estimated · \(unavailable) unavailable").foregroundStyle(.secondary).font(.caption)
                 }
             }.padding(20)
-            HStack {
-                Button { draft = store.range; calendarOpen = true } label: {
-                    Label(store.range.label, systemImage: "calendar")
-                }.popover(isPresented: $calendarOpen, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Select a date").font(.headline)
-                        RangeCalendar(range: $draft, availableDays: store.availableDays)
-                        Text("Shift-click to select a range. Grey days have no conversations.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Text(draft.label).font(.subheadline.monospacedDigit())
-                        HStack {
-                            Button("Cancel") { calendarOpen = false }.keyboardShortcut(.cancelAction)
-                            Spacer()
-                            Button("Apply") { store.select(draft); calendarOpen = false }
-                                .disabled(!store.availableDays.contains(draft.start) || !store.availableDays.contains(draft.end))
-                                .keyboardShortcut(.defaultAction)
-                        }
-                    }.padding(14).frame(width: 200)
+            controlsLayout {
+                HStack {
+                    Button { draft = store.range; calendarOpen = true } label: {
+                        Label(store.range.label, systemImage: "calendar")
+                    }.popover(isPresented: $calendarOpen, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Select a date").font(.headline)
+                            RangeCalendar(range: $draft, availableDays: store.availableDays)
+                            Text("Shift-click to select a range. Grey days have no conversations.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(draft.label).font(.subheadline.monospacedDigit())
+                            HStack {
+                                Button("Cancel") { calendarOpen = false }.keyboardShortcut(.cancelAction)
+                                Spacer()
+                                Button("Apply") { store.select(draft); calendarOpen = false }
+                                    .disabled(!store.availableDays.contains(draft.start) || !store.availableDays.contains(draft.end))
+                                    .keyboardShortcut(.defaultAction)
+                            }
+                        }.padding(14).frame(width: 200)
+                    }
+                    Toggle("Auto-select today", isOn: Binding(get: { store.followToday }, set: { value in
+                        if value { store.today() } else { store.followToday = false }
+                    })).toggleStyle(.checkbox)
+                        .help("Selects today now and follows day changes at the next log check, including when a window becomes visible again or the Mac wakes. Choosing dates turns this off. Enabled on each app launch. Usage updates in either mode.")
+                    Spacer()
                 }
-                Toggle("Auto-select today", isOn: Binding(get: { store.followToday }, set: { value in
-                    if value { store.today() } else { store.followToday = false }
-                })).toggleStyle(.checkbox)
-                    .help("Selects today now and follows day changes at the next log check, including when a window becomes visible again or the Mac wakes. Choosing dates turns this off. Enabled on each app launch. Usage updates in either mode.")
-                Spacer()
-                TextField("Search title, ID or model", text: $search).textFieldStyle(.roundedBorder).frame(width: 240)
-                Button {
-                    Task { await store.scan() }
-                    Task { await store.refreshPrices(force: true) }
-                } label: { Image(systemName: "arrow.clockwise") }.help("Check logs and refresh prices")
-                    .disabled(store.fetching)
+                HStack {
+                    TextField("Search title, ID or model", text: $search).textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 150, maxWidth: compact ? .infinity : 240)
+                    Button {
+                        Task { await store.scan() }
+                        Task { await store.refreshPrices(force: true) }
+                    } label: { Image(systemName: "arrow.clockwise") }.help("Check logs and refresh prices")
+                        .disabled(store.fetching)
+                }
             }.padding(.horizontal, 20).padding(.bottom, 14)
             Text("Usage updates for any selected dates. Auto-select today follows the current day; choosing dates turns it off. Enabled on each launch.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 20).padding(.bottom, 10)
             Divider()
-            Table(filtered, selection: $selection) {
-                TableColumn("Date") { s in Text(s.date, format: .dateTime.day().month().year()).monospacedDigit() }.width(100)
-                TableColumn("Time") { s in Text(s.date, format: .dateTime.hour().minute().second()).monospacedDigit() }.width(85)
-                TableColumn("Conversation") { s in
-                    if let url = s.codexURL {
-                        Link(s.title, destination: url).lineLimit(2).help("Open in Codex: \(s.title)")
-                    } else { Text(s.title).lineLimit(2).help(s.title) }
-                }.width(min: 160, ideal: 280)
-                TableColumn("Model") { s in Text(s.models.isEmpty ? "—" : s.models.joined(separator: ", ")).help(s.models.joined(separator: ", ")) }.width(145)
-                TableColumn("Estimated cost") { s in Text(dollars(store.estimate(s).cost)).monospacedDigit().help(store.estimate(s).reason ?? "Standard API equivalent") }.width(105)
-                TableColumn("") { s in Button { detail = s } label: { Image(systemName: "info.circle") }.buttonStyle(.borderless).accessibilityLabel("Details for \(s.title)") }.width(30)
+            if compact {
+                Table(filtered, selection: $selection) { sessionColumns(compact: true) }
+            } else {
+                Table(filtered, selection: $selection) {
+                    TableColumn("Date") { s in Text(s.date, format: .dateTime.day().month().year()).monospacedDigit() }.width(100)
+                    TableColumn("Time") { s in Text(s.date, format: .dateTime.hour().minute().second()).monospacedDigit() }.width(85)
+                    sessionColumns(compact: false)
+                }
             }
             if filtered.isEmpty { Text("No conversations in this date range.").foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 8) }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
+                controlsLayout {
                     Link(destination: URL(string: "https://tools.pwa.ovh/openai-pricing")!) {
                         if let date = store.catalog.flatMap({ parseDate($0.fetchedAt) }) {
                             Text("Prices retrieved \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute().second().locale(Locale.autoupdatingCurrent))) (via tools.pwa.ovh) ↗")
                         } else { Text("No prices available (via tools.pwa.ovh) ↗") }
                     }
-                    Spacer()
+                    if !compact { Spacer() }
                     Text(store.updateStatus).foregroundStyle(.secondary)
                 }
                 Text("Estimate convention: total input per request, including cached tokens, determines the context tier; selected rates apply to the entire request. These rules remain unverified by the endpoint.").foregroundStyle(.secondary)
@@ -365,10 +376,34 @@ struct MainView: View {
                 if !store.logStatus.isEmpty { Text(store.logStatus).foregroundStyle(.orange).textSelection(.enabled) }
             }.font(.caption).padding(14)
         }
-        .sheet(item: $detail) { session in
-            DetailView(session: store.sessions.first(where: { $0.id == session.id }) ?? session, catalog: store.catalog)
-        }
     }
+    @TableColumnBuilder<Session, Never>
+    private func sessionColumns(compact: Bool) -> some TableColumnContent<Session, Never> {
+        TableColumn("Conversation") { s in
+            VStack(alignment: .leading, spacing: 3) {
+                if let url = s.codexURL {
+                    Link(destination: url) {
+                        Text(s.title).lineLimit(1).truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.help("Open in Codex: \(s.title)")
+                } else { Text(s.title).lineLimit(1).truncationMode(.tail).help(s.title) }
+                if compact {
+                    Text(s.date, format: .dateTime.day().month().year().hour().minute().second())
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.width(min: compact ? 120 : 160, ideal: 280, max: .infinity)
+        TableColumn("Model") { s in
+            Text(s.models.isEmpty ? "—" : s.models.joined(separator: ", "))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(s.models.joined(separator: ", "))
+        }.width(145)
+        TableColumn("Estimated cost") { s in Text(dollars(store.estimate(s).cost)).monospacedDigit().help(store.estimate(s).reason ?? "Standard API equivalent") }.width(90)
+        TableColumn("") { s in Button { detail = s } label: { Image(systemName: "info.circle") }.buttonStyle(.borderless).accessibilityLabel("Details for \(s.title)") }.width(compact ? 24 : 30)
+    }
+
 }
 struct DetailView: View {
     let session: Session
