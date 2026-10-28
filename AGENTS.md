@@ -25,3 +25,12 @@ Before making changes, read [Git](docs/agents/git.md) and follow its branch-isol
 After code changes, run `./build.sh` and relevant checks from the guides. For documentation-only changes, check facts, links and consistency; compilation is unnecessary. Human contribution guidance is in [README.md](README.md#contributing).
 
 Change versions when preparing a release, not on every commit or local build. Each distributed artifact must have a unique public semantic version; see [Runtime and distribution](docs/agents/runtime.md#versioning).
+
+## Writing style
+
+These rules apply to all generated text: chat replies, documentation, interface text, commit messages, and GitHub content. This includes issue and PR titles, descriptions, reviews, and comments.
+
+- Be concise and direct. Use short, clear sentences and familiar, precise words. Keep one main idea per sentence.
+- Preserve the intended meaning and necessary context. Keep required details, evidence, qualifications, and disclosures, even when they need more space.
+- Remove repetition, filler, and unnecessary structure. Keep the length proportional to the task.
+- Stay polite and respectful. When addressing people, phrase requests as courteous questions or suggestions. Avoid commands or a demanding tone.
