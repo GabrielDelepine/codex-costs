@@ -26,6 +26,7 @@ The app reads the Codex session files already on your Mac. You do not need an AP
 - [Build from source](#build-from-source)
 - [Project structure](#project-structure)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Who is it for?
 
@@ -238,7 +239,7 @@ cd codex-costs
 
 Use `./build.sh` to compile without launching. The script builds for the current Mac architecture, creates `build/Codex Costs.app`, generates the macOS icon resources and applies an ad-hoc signature. You can subsequently open the `.app` by double-clicking it.
 
-The script uses Apple's `swiftc`, `sips`, `iconutil` and `codesign`. Generated files stay under the ignored `build/` directory; Swift's module cache is outside the repository.
+The script uses Apple's `swiftc`, `sips`, `iconutil` and `codesign`. It includes the MIT license and copyright notice in the app's `Contents/Resources/LICENSE` before signing. Generated files stay under the ignored `build/` directory; Swift's module cache is outside the repository.
 
 The About window shows the public semantic version, a GitHub link to the source commit, its committer date, and the build date and time using macOS formatting preferences and the local time zone. These timestamps are recorded during compilation. Builds with local changes identify the commit as the base source; source metadata is unavailable when building without Git history.
 
@@ -313,3 +314,9 @@ Successful Git and build output is hidden; failures show indented diagnostics. I
 Package the compiled app in a DMG for download, verify the final image, then calculate its SHA-256. Attach the image and checksum to the GitHub release and document the actual architecture, minimum macOS version and signing status. A checksum does not provide Developer ID signing or notarization.
 
 Do not include personal session files, local pricing caches, credentials or generated build output in source commits.
+
+## License
+
+Codex Costs is licensed under the [MIT License](LICENSE). You may use, modify and redistribute it, including commercially, provided you retain the copyright and license notice in copies or substantial portions of the software.
+
+The software is provided **"AS IS", without warranty of any kind**, with the exclusion of liability stated in the license. Cost estimates are informational and may be incomplete or inaccurate; see [Understanding the estimate](#understanding-the-estimate) and [Coverage and known limitations](#coverage-and-known-limitations).

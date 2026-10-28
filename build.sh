@@ -16,6 +16,7 @@ build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 APP="$PWD/build/Codex Costs.app"
 SWIFT_CACHE="${TMPDIR:-/tmp}/codex-costs-swift-module-cache"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$SWIFT_CACHE"
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 ICONSET="$PWD/build/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for size in 16 32 128 256 512; do
