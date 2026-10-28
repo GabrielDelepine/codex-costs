@@ -9,7 +9,9 @@ Keep Codex Costs a tiny, native, local macOS utility for understanding Codex tok
 - Prefer an explained unavailable estimate to a guessed cost. State assumptions and coverage gaps.
 - Keep changes focused. Update affected documentation; distinguish implemented behavior from proposals.
 
-Before making changes, read [Git](docs/agents/git.md) and follow its branch-isolation rules. For other work, read only the relevant guides; combine them for cross-cutting tasks:
+Before modifying repository files, read [Git](docs/agents/git.md) and verify that the current directory is the dedicated Git worktree for this task. Reuse it when continuing the same task; otherwise, create a dedicated worktree and switch to its directory before editing. If the worktree cannot be created or verified, stop and report the blocker without modifying repository files. Keep the original checkout, its current branch, and any local changes unchanged. Follow the guide’s branch-isolation rules in the dedicated worktree.
+
+For other work, read only the relevant guides; combine them for cross-cutting tasks:
 
 | Change | Guide |
 | --- | --- |

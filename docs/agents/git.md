@@ -3,7 +3,7 @@
 ## Pull request isolation
 
 - Determine the repository’s default branch from GitHub. Never assume its name or use the current local branch as a substitute. If it cannot be determined or fetched, stop and report the blocker.
-- Before making changes, fetch the default branch from the GitHub remote and create a fresh working branch from that exact remote-tracking commit. Use a separate worktree when needed to preserve existing local work.
+- Before making changes, fetch the default branch from the GitHub remote and create a fresh working branch from that exact remote-tracking commit. Before editing, verify with `git worktree list --porcelain` and `git rev-parse --show-toplevel` that the current directory is the dedicated worktree for this task. Reuse that worktree when continuing the same task; otherwise, create one and switch to its directory. If creation or verification fails, stop and report the blocker without modifying repository files. Keep the original checkout, its current branch, and any local changes unchanged.
 - Never base the branch on another PR, an existing feature branch, or an outdated local default branch. Stacked PRs require explicit user authorization.
 - If relevant changes already exist elsewhere, apply only the changes required for this PR onto the fresh branch. Do not merge the source branch or carry over unrelated commits.
 - Before opening the PR, fetch the default branch again. If it has advanced, rebase onto its latest remote state, resolve conflicts, and rerun the required checks. Coordinate explicitly before rewriting a branch shared with other contributors.
