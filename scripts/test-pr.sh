@@ -105,10 +105,47 @@ cleanup() {
     fi
 }
 
-# Only consider image files created on the Desktop during this test. Names and
-# their localized dates are deliberately ignored; every candidate is previewed.
+# Compression can replace a file and reset all filesystem dates. Record names
+# before launch, and use the capture timestamp in standard macOS filenames.
+snapshot_desktop_files() {
+    local desktop_file
+    desktop_files_before_test=()
+    [[ -d "$HOME/Desktop" ]] || return 0
+    while IFS= read -r -d '' desktop_file; do
+        desktop_files_before_test+=("$desktop_file")
+    done < <(find "$HOME/Desktop" -maxdepth 1 -type f -print0)
+}
+
+screenshot_capture_time() {
+    local filename="${1##*/}" capture_pattern capture_date capture_time
+    local date_part hour minute second meridiem
+    # macOS can put nonbreaking spaces before AM/PM in localized filenames.
+    filename="${filename//$'\342\200\257'/ }"
+    filename="${filename//$'\302\240'/ }"
+    capture_pattern='([0-9]{4}-[0-9]{2}-[0-9]{2})[^0-9]+([0-9]{1,2})[.:]([0-9]{2})[.:]([0-9]{2})([[:space:]]*([aApP][mM]))?\.[^.]+$'
+    [[ "$filename" =~ $capture_pattern ]] || return 1
+    date_part="${BASH_REMATCH[1]}"
+    hour=$((10#${BASH_REMATCH[2]}))
+    minute="${BASH_REMATCH[3]}"
+    second="${BASH_REMATCH[4]}"
+    meridiem="${BASH_REMATCH[6]:-}"
+    if [[ -n "$meridiem" ]]; then
+        (( hour >= 1 && hour <= 12 )) || return 1
+        hour=$((hour % 12))
+        case "$meridiem" in
+            [pP][mM]) hour=$((hour + 12)) ;;
+        esac
+    fi
+    (( hour <= 23 && 10#$minute <= 59 && 10#$second <= 59 )) || return 1
+    printf -v capture_date '%s %02d:%s:%s' "$date_part" "$hour" "$minute" "$second"
+    capture_time=$(date -j -f '%Y-%m-%d %H:%M:%S' "$capture_date" '+%s' 2>/dev/null) || return 1
+    # Reject invalid dates that date(1) might otherwise normalize.
+    [[ "$(date -r "$capture_time" '+%Y-%m-%d %H:%M:%S')" == "$capture_date" ]] || return 1
+    printf '%s\n' "$capture_time"
+}
+
 collect_screenshots() {
-    local image creation_time
+    local image capture_time previous_file already_present
     screenshot_choices=()
     [[ -d "$HOME/Desktop" ]] || return 0
     while IFS= read -r -d '' image; do
@@ -116,9 +153,17 @@ collect_screenshots() {
             *.[pP][nN][gG]|*.[jJ][pP][gG]|*.[jJ][pP][eE][gG]|*.[gG][iI][fF]|*.[wW][eE][bB][pP]) ;;
             *) continue ;;
         esac
-        creation_time=$(stat -f '%B' "$image" 2>/dev/null) || continue
-        [[ "$creation_time" =~ ^[0-9]+$ ]] || continue
-        if (( creation_time >= test_started && creation_time <= test_finished )); then
+        already_present=false
+        for previous_file in "${desktop_files_before_test[@]+"${desktop_files_before_test[@]}"}"; do
+            if [[ "$image" == "$previous_file" ]]; then
+                already_present=true
+                break
+            fi
+        done
+        [[ "$already_present" == false ]] || continue
+        xattr -p com.apple.metadata:kMDItemIsScreenCapture "$image" >/dev/null 2>&1 || continue
+        capture_time=$(screenshot_capture_time "$image") || continue
+        if (( capture_time >= test_started && capture_time <= test_finished )); then
             screenshot_choices+=("$image")
         fi
     done < <(find "$HOME/Desktop" -maxdepth 1 -type f -print0)
@@ -334,7 +379,7 @@ printf '    After quitting, report the result and optionally publish feedback or
 
 [[ "$(uname -s)" == Darwin ]] || fail "This script requires macOS."
 [[ -t 0 ]] || fail "Run this script in an interactive terminal."
-for required_command in git curl osascript open pgrep qlmanage xcrun; do
+for required_command in git curl osascript open pgrep qlmanage xcrun xattr; do
     command -v "$required_command" >/dev/null 2>&1 || fail "Required macOS tool is unavailable: $required_command"
 done
 
@@ -478,6 +523,7 @@ fi
 
 printf '\n    The test app will open. Quit the app completely to return here.\n'
 printf '    Your terminal will wait; closing only the app window is not enough.\n'
+snapshot_desktop_files
 test_started=$(date +%s)
 app_may_be_running=true
 if ! open -n -W "$test_app"; then
