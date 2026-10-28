@@ -1,5 +1,7 @@
 # Pull requests
 
+Follow the shared [writing style](../../AGENTS.md#writing-style) for titles, descriptions, reviews, and comments.
+
 ## Titles and descriptions
 
 - Write the title and description in English.
