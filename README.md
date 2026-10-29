@@ -154,7 +154,7 @@ Focused release-update checks are described in the [runtime guide](docs/agents/r
 
 ### Test an open pull request
 
-Run `make pr` (or `make pull-request`) in a macOS terminal and enter a listed PR number. Testing uses a temporary worktree and leaves your checkout unchanged. Only test code you trust: the PR's build runs with your user permissions. The script quits a running Codex Costs instance; the test app may share its preferences.
+Run `make pr` (or `make pull-request`) in a macOS terminal and enter a listed PR number. Testing uses a temporary worktree and leaves your checkout unchanged. For PRs containing only your commits, you can approve a signed rebase that adds the PR number to commit titles and rewrites the remote PR branch with `--force-with-lease`. Only test code you trust: the PR's build runs with your user permissions. The script quits a running Codex Costs instance; the test app may share its preferences.
 
 Quit the test app completely to return to the terminal. Publishing results or screenshots and merging each require explicit choices. Failed tests never offer merging. See the [testing guide](docs/pull-request-testing.md) for requirements, privacy precautions and recovery details.
 

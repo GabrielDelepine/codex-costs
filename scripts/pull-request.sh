@@ -43,9 +43,9 @@ fail() {
     exit 1
 }
 
-# Bound GitHub CLI requests without changing the user's gh configuration.
-run_gh() (
-    GH_HOST=github.com GH_PROMPT_DISABLED=1 gh "$@" &
+# Bound authenticated network commands without changing user configuration.
+run_with_timeout() (
+    "$@" &
     local command_pid=$! watchdog_pid result
     (
         sleep 45 &
@@ -66,11 +66,24 @@ run_gh() (
     return "$result"
 )
 
+run_gh() {
+    GH_HOST=github.com GH_PROMPT_DISABLED=1 run_with_timeout gh "$@"
+}
+
+# Use the authenticated account without changing Git's credential configuration.
+run_remote_git() {
+    GIT_TERMINAL_PROMPT=0 GH_HOST=github.com GH_PROMPT_DISABLED=1 run_with_timeout \
+        git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+        -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 \
+        -c push.followTags=false -c push.recurseSubmodules=no "$@"
+}
+
 # EOF and cancellation always mean no permission to publish or merge.
 ask_yes_no() {
-    local answer
+    local answer default_answer="${2:-no}" choices=yN
+    [[ "$default_answer" == yes ]] && choices=Yn
     while true; do
-        printf '\n    %s [yN] ' "$1"
+        printf '\n    %s [%s] ' "$1" "$choices"
         if ! read -r answer; then
             printf '\n\n'
             return 2
@@ -78,7 +91,8 @@ ask_yes_no() {
         printf '\n'
         case "$answer" in
             [yY]|[yY][eE][sS]) return 0 ;;
-            ''|[nN]|[nN][oO]) return 1 ;;
+            '') [[ "$default_answer" == yes ]] && return 0; return 1 ;;
+            [nN]|[nN][oO]) return 1 ;;
             *) printf '    Enter y or n.\n' ;;
         esac
     done
@@ -86,13 +100,16 @@ ask_yes_no() {
 
 cleanup() {
     # Never force removal: unexpected changes in the test worktree are preserved.
-    if [[ -d "$test_worktree" ]]; then
+    if [[ -d "$test_worktree" && "$retain_worktree" != true ]]; then
         if git worktree remove "$test_worktree" >"$temporary_directory/cleanup.log" 2>&1; then
             rmdir "$worktree_directory" 2>/dev/null || true
         else
             printf '\n    Test worktree retained: %s\n' "$test_worktree" >&2
             printf '    Inspect it, then remove it with: git worktree remove %q\n' "$test_worktree" >&2
         fi
+    elif [[ -d "$test_worktree" ]]; then
+        printf '\n    Worktree retained for recovery: %s\n' "$test_worktree" >&2
+        printf '    Inspect it, then remove it with: git worktree remove %q\n' "$test_worktree" >&2
     else
         rmdir "$worktree_directory" 2>/dev/null || true
     fi
@@ -126,7 +143,7 @@ collect_screenshots() {
 
 # Read-only checks. A permission level alone does not establish merge readiness.
 check_merge_ready() {
-    local permission snapshot current_head current_base current_state current_draft mergeable merge_status
+    local permission snapshot current_head current_base current_state current_draft mergeable merge_status current_base_branch
     if ! permission=$(run_gh api "repos/$repository" --jq '.permissions.push' 2>"$temporary_directory/github.log"); then
         printf '    Merge unavailable: could not verify your GitHub permissions.\n'
         return 1
@@ -136,15 +153,19 @@ check_merge_ready() {
         return 1
     fi
     if ! snapshot=$(run_gh pr view "$pull_number" --repo "$repository" \
-        --json headRefOid,baseRefOid,state,isDraft,mergeable,mergeStateStatus \
-        --jq '[.headRefOid, .baseRefOid, .state, (.isDraft | tostring), .mergeable, .mergeStateStatus] | @tsv' \
+        --json headRefOid,baseRefOid,state,isDraft,mergeable,mergeStateStatus,baseRefName \
+        --jq '[.headRefOid, .baseRefOid, .state, (.isDraft | tostring), .mergeable, .mergeStateStatus, .baseRefName] | @tsv' \
         2>"$temporary_directory/github.log"); then
         printf '    Merge unavailable: could not verify the PR status.\n'
         return 1
     fi
-    IFS=$'\t' read -r current_head current_base current_state current_draft mergeable merge_status <<< "$snapshot"
+    IFS=$'\t' read -r current_head current_base current_state current_draft mergeable merge_status current_base_branch <<< "$snapshot"
     if [[ "$current_state" != OPEN || "$current_draft" != false ]]; then
         printf '    Merge unavailable: the PR is closed or a draft.\n'
+        return 1
+    fi
+    if [[ "$rebased" == true && "$current_base_branch" != main ]]; then
+        printf '    Merge unavailable: the PR no longer targets main.\n'
         return 1
     fi
     if [[ "$current_head" != "$tested_head" || "$current_base" != "$tested_base" ]]; then
@@ -158,6 +179,206 @@ check_merge_ready() {
     if [[ "$mergeable" != MERGEABLE || "$merge_status" != CLEAN ]]; then
         printf '    Merge unavailable: GitHub reports pending checks, reviews or rules, or an unknown merge status.\n'
         return 1
+    fi
+}
+
+# Fail closed: match every local PR commit to GitHub's authenticated author ID.
+# Unknown authors and co-authored commits keep the merge test.
+prepare_rebase() {
+    local viewer_id commit author_id snapshot remote_head remote_base state
+    local remote_branch source_repository permission rebase_command signing_format signing_key public_key rebased_head sign_commits
+    local rebase_signing_arguments=() needs_rebase=false needs_pr_reference=false subject
+    rebased=false
+    if ! command -v gh >/dev/null 2>&1 ||
+        ! viewer_id=$(run_gh api user --jq .id 2>"$temporary_directory/github.log"); then
+        printf '    Rebase unavailable: sign in with GitHub CLI to verify commit ownership.\n'
+        return
+    fi
+    [[ "$viewer_id" =~ ^[1-9][0-9]*$ ]] || return 0
+    if ! run_gh api --paginate "repos/$repository/pulls/$pull_number/commits?per_page=100" \
+        --jq '.[] | [.sha, (.author.id // 0)] | @tsv' \
+        >"$temporary_directory/authors.tsv" 2>"$temporary_directory/github.log"; then
+        printf '    Rebase unavailable: could not verify all commit authors.\n'
+        return
+    fi
+    while IFS=$'\t' read -r commit author_id; do
+        if [[ ! "$commit" =~ ^[0-9a-f]{40}$ || "$author_id" != "$viewer_id" ]]; then
+            printf '    Keeping the merge test: not every commit belongs to your GitHub account.\n'
+            return
+        fi
+    done <"$temporary_directory/authors.tsv"
+    git rev-list "$tested_base..$tested_head" | sort >"$temporary_directory/local-commits"
+    cut -f1 "$temporary_directory/authors.tsv" | sort >"$temporary_directory/remote-commits"
+    if [[ ! -s "$temporary_directory/local-commits" ]] ||
+        ! cmp -s "$temporary_directory/local-commits" "$temporary_directory/remote-commits"; then
+        printf '    Rebase unavailable: GitHub did not confirm the complete tested commit range.\n'
+        return
+    fi
+    if git log --format=%B "$tested_base..$tested_head" | /usr/bin/grep -i '^Co-authored-by:' >/dev/null; then
+        printf '    Keeping the merge test: co-author credits need manual review.\n'
+        return
+    fi
+    if ! snapshot=$(run_gh api "repos/$repository/pulls/$pull_number" \
+        --jq '[.head.repo.clone_url // "", .head.ref, .base.ref, .head.sha, .base.sha, .state] | @tsv' \
+        2>"$temporary_directory/github.log"); then
+        printf '    Rebase unavailable: could not check the PR branches.\n'
+        return
+    fi
+    IFS=$'\t' read -r head_repository_url remote_branch base_branch remote_head remote_base state <<< "$snapshot"
+    if [[ "$base_branch" != main || "$remote_head" != "$tested_head" ||
+        "$remote_base" != "$tested_base" || "$state" != open ]]; then
+        printf '    Rebase unavailable: the PR changed or does not target main.\n'
+        return
+    fi
+    if [[ ! "$head_repository_url" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$ ]] ||
+        ! git check-ref-format "refs/heads/$remote_branch" >/dev/null 2>&1; then
+        printf '    Rebase unavailable: unsupported PR source branch.\n'
+        return
+    fi
+    source_repository=${head_repository_url#https://github.com/}
+    source_repository=${source_repository%.git}
+    permission=$(run_gh api "repos/$source_repository" \
+        --jq .permissions.push 2>"$temporary_directory/github.log") || permission=false
+    if [[ "$permission" != true ]]; then
+        printf '    Rebase unavailable: write access to the PR source repository is required.\n'
+        return
+    fi
+    if ! git merge-base --is-ancestor "$tested_base" "$tested_head"; then
+        needs_rebase=true
+    fi
+    while IFS= read -r commit; do
+        subject=$(git show -s --format=%s "$commit")
+        case "$subject" in
+            *"(#$pull_number)"*) ;;
+            *) needs_pr_reference=true ;;
+        esac
+    done <"$temporary_directory/local-commits"
+    if [[ "$needs_rebase" == false && "$needs_pr_reference" == false ]]; then
+        run_quietly "Could not check out the prepared PR head in the isolated worktree." \
+            git -C "$test_worktree" checkout --detach "$tested_head"
+        git update-ref "$test_reference" "$tested_head"
+        rebased=true
+        printf '    PR already contains main and its commit titles include (#%s). Testing its existing head.\n' "$pull_number"
+        return
+    fi
+    printf '\n    All PR commits belong to your GitHub account.\n'
+    printf '    Rebasing rewrites them, adds (#%s) to their titles,\n' "$pull_number"
+    printf '    and updates the remote PR branch with an explicit force-with-lease.\n'
+    if ! ask_yes_no 'Rebase commits on main?' yes; then
+        return
+    fi
+    git config user.name >/dev/null && git config user.email >/dev/null ||
+        fail "Configure your Git name and email before rebasing. The remote PR is unchanged."
+
+    sign_commits=$(git config --bool commit.gpgsign || true)
+    if [[ "$sign_commits" == true ]]; then
+        rebase_signing_arguments=(--gpg-sign)
+    else
+        while IFS= read -r commit; do
+            git cat-file commit "$commit" |
+                /usr/bin/awk '/^$/ {body=1} !body && /^gpgsig / {print "signed"}'
+        done <"$temporary_directory/local-commits" >"$temporary_directory/original-signatures"
+        if [[ -s "$temporary_directory/original-signatures" ]]; then
+            fail "Enable Git commit signing before rewriting signed commits. The remote PR is unchanged."
+        fi
+    fi
+
+    # SSH verification needs trusted signers. If none are configured, trust only
+    # the public key explicitly selected by the user's signing configuration.
+    signature_arguments=()
+    signing_format=$(git config gpg.format || true)
+    if [[ "$signing_format" == ssh ]] && ! git config gpg.ssh.allowedSignersFile >/dev/null; then
+        signing_key=$(git config user.signingkey || true)
+        public_key=''
+        if [[ "$signing_key" == key::* ]]; then
+            public_key=${signing_key#key::}
+        elif [[ -f "$signing_key" ]]; then
+            IFS= read -r public_key <"$signing_key" || true
+        fi
+        case "$public_key" in
+            ssh-*|ecdsa-*|sk-*)
+                printf '* %s\n' "$public_key" >"$temporary_directory/allowed-signers"
+                signature_arguments=(-c "gpg.ssh.allowedSignersFile=$temporary_directory/allowed-signers")
+                ;;
+        esac
+    fi
+    cat >"$temporary_directory/reword-commit.sh" <<'REWORD'
+#!/bin/bash
+set -euo pipefail
+signing_arguments=()
+[[ "$2" == true ]] && signing_arguments=(--gpg-sign)
+message=$(mktemp)
+trap 'rm -f "$message"' EXIT
+git log -1 --pretty=format:%B | {
+    IFS= read -r subject
+    case "$subject" in
+        *"(#$1)"*) printf '%s\n' "$subject" ;;
+        *) printf '%s (#%s)\n' "$subject" "$1" ;;
+    esac
+    cat
+} >"$message"
+git -c core.hooksPath=/dev/null commit --amend --allow-empty "${signing_arguments[@]+"${signing_arguments[@]}"}" --cleanup=verbatim --file "$message"
+REWORD
+    printf -v rebase_command '%q %q %q %q' /bin/bash "$temporary_directory/reword-commit.sh" "$pull_number" "$sign_commits"
+    run_quietly "Could not check out the PR head in the isolated worktree." \
+        git -C "$test_worktree" checkout --detach "$tested_head"
+    # Disable hooks and automatic reference updates only for this isolated run.
+    # Keep empty commits and force replay even when the branch is already current.
+    if ! git -C "$test_worktree" -c core.hooksPath=/dev/null rebase \
+        --force-rebase --keep-empty --empty=keep --reapply-cherry-picks --no-autosquash --no-update-refs \
+        --rebase-merges "${rebase_signing_arguments[@]+"${rebase_signing_arguments[@]}"}" --exec "$rebase_command" "$tested_base" \
+        >"$temporary_directory/rebase.log" 2>&1; then
+        sed 's/^/    /' "$temporary_directory/rebase.log" >&2
+        retain_worktree=true
+        fail "Rebase or signing failed; the remote PR is unchanged. Inspect the retained worktree, then use git rebase --abort if needed."
+    fi
+    rebased_head=$(git -C "$test_worktree" rev-parse HEAD)
+    if [[ "$(git rev-list --count "$tested_base..$rebased_head")" != "$(wc -l <"$temporary_directory/local-commits" | tr -d ' ')" ]] ||
+        ! git merge-base --is-ancestor "$tested_base" "$rebased_head"; then
+        retain_worktree=true
+        fail "The rebase did not preserve the PR commit count and ancestry. The remote PR is unchanged."
+    fi
+    while IFS= read -r commit; do
+        if [[ "$sign_commits" == true ]] && ! git "${signature_arguments[@]+"${signature_arguments[@]}"}" verify-commit "$commit" \
+            >"$temporary_directory/signature.log" 2>&1; then
+            retain_worktree=true
+            fail "Signature verification failed; the remote PR is unchanged. Inspect the retained worktree and your signing configuration."
+        fi
+    done < <(git -C "$test_worktree" rev-list "$tested_base..HEAD")
+    if ! run_remote_git push "--force-with-lease=refs/heads/$remote_branch:$tested_head" \
+        "$head_repository_url" "$rebased_head:refs/heads/$remote_branch" \
+        >"$temporary_directory/push.log" 2>&1; then
+        sed 's/^/    /' "$temporary_directory/push.log" >&2
+        retain_worktree=true
+        fail "Could not confirm the PR update. Check GitHub before retrying; the rebased worktree was retained."
+    fi
+    tested_head="$rebased_head"
+    git update-ref "$test_reference" "$tested_head"
+    rebased=true
+    printf '    PR branch updated. Testing rebased commit %s.\n' "$tested_head"
+}
+
+merge_fast_forward() {
+    if ! check_merge_ready; then
+        return
+    fi
+    if ! git merge-base --is-ancestor "$tested_base" "$tested_head"; then
+        printf '    Fast-forward unavailable: the tested commit does not descend from main.\n'
+        return
+    fi
+    if ! ask_yes_no "Merge PR #$pull_number into main with a fast-forward?"; then
+        return
+    fi
+    if ! check_merge_ready; then
+        return
+    fi
+    # An ordinary push cannot discard a concurrent, divergent main update.
+    if run_remote_git push "$repository_url.git" "$tested_head:refs/heads/main" \
+        >"$temporary_directory/push.log" 2>&1; then
+        printf '    PR #%s integrated into main by fast-forward.\n' "$pull_number"
+    else
+        sed 's/^/    /' "$temporary_directory/push.log" >&2
+        printf '    Fast-forward failed or could not be confirmed. Check GitHub; main may have advanced or branch protections may forbid direct pushes.\n'
     fi
 }
 
@@ -229,10 +450,15 @@ share_feedback() {
         done
         if ! run_gh "${comment_arguments[@]}"; then
             printf '    Comment publication failed. Check the PR before retrying to avoid duplicates.\n'
+            return
         fi
     fi
 
     if [[ "$test_successful" != true ]]; then
+        return
+    fi
+    if [[ "$rebased" == true ]]; then
+        merge_fast_forward
         return
     fi
     if ! check_merge_ready; then
@@ -326,9 +552,9 @@ printf '    that the combined app works before merging it on GitHub.)\n'
 
 section 'How it works'
 printf '    %s1%s  Choose an open PR.\n' "$cyan" "$reset"
-printf '    %s2%s  Prepare the test merge in a separate worktree.\n' "$cyan" "$reset"
+printf '    %s2%s  Prepare an isolated test; optionally rebase your own commits.\n' "$cyan" "$reset"
 printf '    %s3%s  Build and open the app; any running instance will be quit first.\n' "$cyan" "$reset"
-printf '\n    Your branch and local changes stay in place.\n'
+printf '\n    Your checkout stays in place. An approved rebase updates the remote PR.\n'
 printf '    The script will execute code from the PR you choose.\n'
 printf '    After quitting, report the result and optionally publish feedback or merge.\n'
 
@@ -351,6 +577,8 @@ worktree_directory=$(mktemp -d "${TMPDIR:-/tmp}/codex-costs-worktree.XXXXXX")
 test_worktree="$worktree_directory/source"
 test_reference="refs/codex-costs-tests/$(basename "$worktree_directory")"
 app_may_be_running=false
+retain_worktree=false
+rebased=false
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
@@ -408,7 +636,7 @@ pull_number="$selection"
 pull_url="$repository_url/pull/$pull_number"
 section '2 / 3 · Prepare the test merge'
 printf '    %s%s%s\n    %s\n' "$bold" "$selected_choice" "$reset" "$pull_url"
-printf '\n    GitHub generates a test merge combining this PR with its target branch.\n'
+printf '\n    GitHub prepares a merge test; your own commits can instead be rebased on main.\n'
 printf '    This lets you check how the app works after merging.\n'
 printf '    Later changes to the target branch or the PR can change the result.\n'
 printf '    PRs with merge conflicts cannot be tested until those conflicts are resolved.\n'
@@ -441,6 +669,7 @@ tested_base=$(git rev-parse "$merge_commit^1")
 tested_head=$(git rev-parse "$merge_commit^2")
 run_quietly "Could not create the isolated test worktree." \
     git worktree add --detach "$test_worktree" "$merge_commit"
+prepare_rebase
 tested_commit_short=$(git -C "$test_worktree" rev-parse --short HEAD)
 
 section '3 / 3 · Build and test'
