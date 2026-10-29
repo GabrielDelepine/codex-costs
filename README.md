@@ -307,7 +307,7 @@ These focused checks do not cover the full app or replace manual UI testing. For
 
 ### Test an open pull request
 
-Run `./scripts/test-pr.sh` in a macOS terminal. It lists open PRs using GitHub’s public API, without requiring a token, GitHub CLI or an extra package for local testing. Enter a listed GitHub PR number (for example, `21`), or `0` to cancel. Set `NO_COLOR=1` to disable styling; redirected output and `TERM=dumb` also remain plain. Anonymous API rate limits apply.
+Run `make pull-request` (or its alias `make pr`) in a macOS terminal. You can also run `./scripts/pull-request.sh` directly. It lists open PRs using GitHub’s public API, without requiring a token, GitHub CLI or an extra package for local testing. Enter a listed GitHub PR number (for example, `21`), or `0` to cancel. Set `NO_COLOR=1` to disable styling; redirected output and `TERM=dumb` also remain plain. Anonymous API rate limits apply.
 
 The script fetches GitHub’s synthetic merge commit into a unique temporary Git ref, verifies its SHA and creates a detached worktree with `mktemp` outside your checkout. It leaves your branch, staged and unstaged changes, untracked files, remote configuration and `FETCH_HEAD` in place. This tests the PR combined with its target branch at that moment; later changes can produce a different result. Worktrees still share Git objects and metadata. Only run code you trust: the selected PR’s `./build.sh` executes with your user permissions.
 
