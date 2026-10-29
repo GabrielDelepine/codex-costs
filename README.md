@@ -283,9 +283,9 @@ Unconfirmed observations are useful too; label them as such rather than presenti
 
 ### Prepare a focused change
 
-Read [AGENTS.md](AGENTS.md) for the shared constraints and required Git preparation before changes. Its linked guides cover implementation, issues, Git, pull requests and model attribution; load only those required for the task. Humans can use the same short guides as contribution checklists. Keep product, installation and contribution explanations in this README rather than scattering them across additional human-facing documents.
+Read [AGENTS.md](AGENTS.md) for the shared constraints and required Git preparation before changes. Its linked guides cover implementation, issues, Git, pull requests and model attribution; load only those required for the task. Humans can use the same short guides as contribution checklists. Keep essential product, installation and contribution information in this README. Link to focused documentation for lengthy procedures or technical details instead of duplicating them.
 
-Keep each change focused on an issue or clearly described problem. Explain the resulting behavior, how you checked it, and any remaining limitations. Update this README when features, installation, data coverage or estimation rules change.
+Keep each change focused on an issue or clearly described problem. Explain the resulting behavior, how you checked it, and any remaining limitations. When a change affects how readers understand, use or contribute to the project, revise the relevant explanation rather than appending a change summary. Replace outdated text and remove details that no longer help; preserve essential estimation assumptions and coverage limits.
 
 ### Verify your change
 
