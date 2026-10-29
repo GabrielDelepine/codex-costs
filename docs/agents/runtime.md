@@ -1,6 +1,6 @@
 # Runtime and distribution
 
-- Prefer native filesystem notifications, debounce bursts and ignore unrelated writes. Keep a low-frequency recovery check, activation/wake handling and midnight rollover.
+- Prefer native filesystem notifications, batch bursts without postponing updates indefinitely, and ignore unrelated writes. Keep a low-frequency recovery check, activation/wake handling and midnight rollover.
 - Cache parsed sessions; reread only changed files, always in full. Do not introduce incremental JSON parsing. Handle creation, deletion, atomic replacement and title-index changes without rereading unrelated logs.
 - Calendar availability may inspect directory metadata/filenames without parsing out-of-range logs. Keep unchanged directory listings cached.
 - Keep file I/O/parsing off the UI thread. Serialize cache ownership, reject stale range results and avoid overlapping scans, leaked watchers or repeated cost calculation during rendering.
@@ -14,10 +14,19 @@ Verify relevant runtime changes: initial load, unchanged files, one-file updates
 
 ## Versioning
 
-- Use Semantic Versioning: MAJOR.MINOR.PATCH.
-- Each distributed artifact must have a unique public version.
-- If rebuilding produces a different artifact intended for distribution, increment at least PATCH, even when the source commit is unchanged.
-- Do not use a separate build number to distinguish distributed artifacts.
-- Display the public version without a parenthesized build number.
-- Keep any build metadata required by Apple consistent with the public version.
-- Change the version when preparing a release, not on every commit or local build.
+- Use `MAJOR.MINOR.PATCH`. Set the version in `build.sh` when preparing a release, not for each commit or local build.
+- Every distributed artifact needs a unique public version. Rebuilding a different artifact for distribution requires at least a PATCH increment, even from the same commit.
+- Keep both Apple bundle version fields consistent with the public version. Display no separate build counter.
+
+## Release-update checks
+
+Run the focused fixtures without live network or personal logs:
+
+```sh
+update_check_dir=$(mktemp -d)
+xcrun swiftc -swift-version 5 -parse-as-library Updates.swift Tests/UpdatesChecks.swift -o "$update_check_dir/updates-checks"
+"$update_check_dir/updates-checks"
+rm -r "$update_check_dir"
+```
+
+These checks cover release/version parsing and scheduling, not the full app. In the running app, also inspect the menu, progress, current/newer/available versions, missing release dates, failure/retry, automatic-check toggle and release link.

@@ -7,7 +7,7 @@ Keep Codex Costs a tiny, native, local macOS utility for understanding Codex tok
 - Preserve `./build.sh`, standalone `.app` output and few, readable source files. Add abstraction only for a concrete need.
 - Keep logs read-only and private. Never upload conversation data or commit personal logs, caches, credentials or build output.
 - Prefer an explained unavailable estimate to a guessed cost. State assumptions and coverage gaps.
-- Keep changes focused. Update affected documentation; distinguish implemented behavior from proposals.
+- Keep changes focused. Update existing documentation when a change affects understanding, usage, or contribution; not every change needs a documentation addition. Distinguish implemented behavior from proposals.
 
 Before modifying repository files, read [Git](docs/agents/git.md) and verify that the current directory is the dedicated Git worktree for this task. Reuse it when continuing the same task; otherwise, create a dedicated worktree and switch to its directory before editing. If the worktree cannot be created or verified, stop and report the blocker without modifying repository files. Keep the original checkout, its current branch, and any local changes unchanged. Follow the guide’s branch-isolation rules in the dedicated worktree.
 
@@ -35,5 +35,6 @@ These rules apply to all generated text: chat replies, documentation, interface 
 - Be concise and direct. Use short, clear sentences and familiar, precise words. Keep one main idea per sentence.
 - Preserve the intended meaning and necessary context. Keep required details, evidence, qualifications, and disclosures, even when they need more space.
 - Remove repetition, filler, and unnecessary structure. Keep the length proportional to the task.
+- Write READMEs for human readers first. Keep essential purpose, usage, constraints, and distinctions whose omission would cause misunderstanding. Remove repetition, generic promotion, development history, and exhaustive implementation details. Do not document every change by default. Prefer one clear explanation in the right place, with links to focused guidance when needed.
 - Keep GitHub messages easy for humans to review. Default to short titles, bodies, reviews, and comments that contain only what the reader needs to understand, assess, or test the change or problem.
 - Stay polite and respectful. When addressing people, phrase requests as courteous questions or suggestions. Avoid commands or a demanding tone.

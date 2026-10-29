@@ -10,4 +10,4 @@
 - Consume the JSON pricing endpoint only; no HTML scraping. Validate schema; save atomically. Preserve last valid prices and source `fetchedAt` after failure. `expiresAt` is endpoint cache expiry, not commercial validity.
 - History must disclose observation gaps. Retain only necessary metadata/counters if persistence is added; never imply complete coverage or copy full conversation contents.
 
-For changed logic, use focused synthetic fixtures: known arithmetic/cache split, threshold boundaries, missing data and relevant parser edge cases. Existing sources contain no committed automated test suite; do not claim one passed. Keep README coverage/limits accurate.
+For changed logic, use focused synthetic fixtures: known arithmetic/cache split, threshold boundaries, missing data and relevant parser edge cases. Describe the scope of those checks; do not claim a full app test suite passed. Keep README coverage/limits accurate.
