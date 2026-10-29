@@ -1,4 +1,4 @@
-.PHONY: build run pr pull-request
+.PHONY: build run pr pull-request release
 
 build:
 	./build.sh
@@ -10,3 +10,6 @@ pr: pull-request
 
 pull-request:
 	./scripts/pull-request.sh
+
+release:
+	./scripts/release.sh

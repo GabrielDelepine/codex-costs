@@ -130,6 +130,8 @@ cd codex-costs
 
 `./build.sh` builds without launching. It produces `build/Codex Costs.app` for the host architecture, includes the MIT license and applies an ad-hoc signature. `make build` and `make run` provide build and launch shortcuts.
 
+`make release` asks for a new `MAJOR.MINOR.PATCH` version from a clean checkout at the current remote default branch. It prepares an isolated release branch, commits any version change using your Git signing configuration, builds and verifies a host-architecture DMG, and generates `SHA256SUMS.txt` under `build/release-VERSION/`. After confirmation, it pushes the release branch and annotated tag together. It prints the remaining steps: test the packaged app, merge the version branch if needed, and publish a stable GitHub release with both assets. It does not publish the GitHub release. Never reuse a version for a different distributed artifact.
+
 The About window shows the public version, source commit and build dates. Modified builds identify their commit as the base source. Release versioning, architecture and packaging requirements are in the [runtime and distribution guide](docs/agents/runtime.md).
 
 ## Contributing
