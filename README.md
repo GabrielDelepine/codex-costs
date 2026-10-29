@@ -8,7 +8,7 @@ Pick a day or date range, compare conversations, and open the info panel for tok
 
 > Estimates use current Standard API prices in USD. They are not ChatGPT subscription charges, remaining allowances or historical invoices. Unreliable estimates are shown as unavailable and excluded from totals.
 
-![Codex Costs conversation table](./docs/screenshot_2026-10-22.avif)
+![Codex Costs conversation table](./docs/screenshot_v1.1.0_2026-10-29.avif)
 
 ## Download and install
 
