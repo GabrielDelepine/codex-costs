@@ -440,14 +440,18 @@ struct DetailView: View {
                     }
                     Text(session.models.joined(separator: ", ")).foregroundStyle(.secondary)
                     let scoped = session.scoped(to: range)
-                    let displayed = entireConversation ? session : scoped
+                    let identicalScopes = scoped.calls.count == session.calls.count
+                    let showingEntireConversation = entireConversation || identicalScopes
+                    let displayed = showingEntireConversation ? session : scoped
                     let estimate = scoped.estimate(catalog)
                     let entireEstimate = session.estimate(catalog)
                     HStack(alignment: .top, spacing: 12) {
-                        summary("Selected period", dates: range.label, estimate: estimate, count: scoped.calls.count, highlighted: !entireConversation) { entireConversation = false }
-                        summary("Entire conversation", dates: session.activityRange?.label ?? "No dated activity", estimate: entireEstimate, count: session.calls.count, highlighted: entireConversation) { entireConversation = true }
+                        if !identicalScopes {
+                            summary("Selected period", dates: range.label, estimate: estimate, count: scoped.calls.count, highlighted: !showingEntireConversation) { entireConversation = false }
+                        }
+                        summary("Entire conversation", dates: session.activityRange?.label ?? "No dated activity", estimate: entireEstimate, count: session.calls.count, highlighted: showingEntireConversation) { entireConversation = true }
                     }
-                    Text(entireConversation ? "Details · Entire conversation" : "Details · Selected period · " + range.label)
+                    Text(showingEntireConversation ? "Details · Entire conversation" : "Details · Selected period · " + range.label)
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Created " + session.date.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary)
                     Grid(alignment: .leading, horizontalSpacing: 35, verticalSpacing: 9) {
@@ -463,7 +467,7 @@ struct DetailView: View {
                     if breakdowns.isEmpty {
                         Text("No pricing applied: no request estimate is available.").font(.caption).foregroundStyle(.secondary)
                     } else {
-                        if (entireConversation ? entireEstimate : estimate).cost == nil {
+                        if (showingEntireConversation ? entireEstimate : estimate).cost == nil {
                             Text("Pricing below applies only to available request estimates; the estimate for this scope is unavailable.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -472,8 +476,8 @@ struct DetailView: View {
                     Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
                     Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
                     Divider()
-                    RequestTable(session: session, range: range, catalog: catalog, scroll: scroll, entireConversation: entireConversation)
-                        .id(entireConversation)
+                    RequestTable(session: session, range: range, catalog: catalog, scroll: scroll, entireConversation: showingEntireConversation)
+                        .id(showingEntireConversation)
                 }.padding(24)
             }.frame(width: 660, height: 650)
         }
