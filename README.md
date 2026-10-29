@@ -56,6 +56,12 @@ Requests with cache writes are currently unavailable because their retention dur
 
 The info panel shows only the model/context price grids used by available request estimates. Checked components contributed tokens; unchecked components were unused. If the conversation total is unavailable, those grids describe only the requests that could be priced.
 
+### Inspect individual requests
+
+Conversation totals, counters, applied pricing and log information appear first in the info panel. An **Individual requests** table appears at the bottom, in log order, with a sequence number, recorded usage-event time, model, context tier and estimated cost for each request. Select a row to inspect its input, cached reads, cache writes and output counters, full timestamp and any unavailable-estimate reason. Request details also show reasoning tokens (already included in output), input excluding cache, output excluding reasoning, and cached reads as a percentage of total input (unavailable when total input is zero). A cost breakdown shows ordinary input, cached reads and output using the same unrounded Decimal calculation as the request total; components are unavailable when the request cannot be priced. Reasoning is not charged again. Display rounding can make component amounts differ from the displayed total when added. The panel automatically scrolls to reveal the selected request’s details, including when navigating with the keyboard. Hover over a time, model, context or cost for its full value or explanation. The table scrolls for longer conversations.
+
+There is no context-group summary in the request section: context is shown per request. A usage timestamp is not an inferred request start time; missing timestamps remain explicit. Request estimates do not replace an unavailable conversation estimate or imply complete coverage. Repeated unchanged usage events do not create duplicate requests.
+
 ### Context pricing assumptions
 
 The estimator selects a context tier **per request**, using total input including cache, and applies that tier to the entire request. It does not use conversation totals or the model's context-window capacity.

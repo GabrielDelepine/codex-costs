@@ -51,6 +51,7 @@ struct Usage: Equatable {
         output = (object["output_tokens"] as? NSNumber)?.int64Value ?? 0
         reasoning = (object["reasoning_output_tokens"] as? NSNumber)?.int64Value ?? 0
     }
+    var isConsistent: Bool { numbers.allSatisfy { $0 >= 0 } && input >= cache + write && reasoning <= output }
     var numbers: [Int64] { [input, cache, write, output, reasoning] }
     static func - (a: Usage, b: Usage) -> Usage {
         var u = Usage(); u.input = a.input-b.input; u.cache = a.cache-b.cache; u.write = a.write-b.write; u.output = a.output-b.output; u.reasoning = a.reasoning-b.reasoning; return u
@@ -64,9 +65,15 @@ struct PricingBreakdown {
     var used: [Bool]
     var id: String { model + "\n" + context }
 }
+struct RequestCostBreakdown {
+    let context: String
+    let ordinaryInput: Decimal, cachedInput: Decimal, output: Decimal
+    var total: Decimal { ordinaryInput + cachedInput + output }
+}
 struct Call {
     let model: String?
     let usage: Usage
+    var timestamp: Date? = nil
     func pricingBreakdown(_ catalog: Catalog?) -> PricingBreakdown? {
         guard estimate(catalog).cost != nil, let model, let applied = try? appliedPricing(catalog) else { return nil }
         return PricingBreakdown(model: model, context: applied.context, rates: applied.rates,
@@ -85,22 +92,26 @@ struct Call {
         guard let rates = long ? published.longContext : published.shortContext else { throw Failure.message("Context prices unavailable") }
         return AppliedPricing(context: long ? "Long context" : "Short context", rates: rates)
     }
+    func costBreakdown(_ catalog: Catalog?) throws -> RequestCostBreakdown {
+        let u = usage
+        guard u.isConsistent else { throw Failure.message("Inconsistent token counters") }
+        let applied = try appliedPricing(catalog)
+        // Retention is not present in Codex token counters: never guess it.
+        guard u.write == 0 else { throw Failure.message("Cache-write retention unknown") }
+        func component(_ tokens: Int64, _ price: Price?) throws -> Decimal {
+            if tokens == 0 { return 0 }
+            guard let price else { throw Failure.message("Required price unknown (null)") }
+            return try price.cost(tokens)
+        }
+        return try RequestCostBreakdown(context: applied.context,
+                                        ordinaryInput: component(u.input-u.cache-u.write, applied.rates.input),
+                                        cachedInput: component(u.cache, applied.rates.cachedInput),
+                                        output: component(u.output, applied.rates.output))
+    }
     func estimate(_ catalog: Catalog?) -> Estimate {
         do {
-            let u = usage
-            guard u.numbers.allSatisfy({ $0 >= 0 }), u.input >= u.cache + u.write, u.reasoning <= u.output else {
-                throw Failure.message("Inconsistent token counters")
-            }
-            let applied = try appliedPricing(catalog)
-            // Retention is not present in Codex token counters: never guess it.
-            guard u.write == 0 else { throw Failure.message("Cache-write retention unknown") }
-            var sum: Decimal = 0
-            for (tokens, price) in [(u.input-u.cache-u.write, applied.rates.input), (u.cache, applied.rates.cachedInput), (u.output, applied.rates.output)] {
-                if tokens == 0 { continue }
-                guard let price else { throw Failure.message("Required price unknown (null)") }
-                sum += try price.cost(tokens)
-            }
-            return Estimate(cost: sum, reason: nil, context: applied.context)
+            let breakdown = try costBreakdown(catalog)
+            return Estimate(cost: breakdown.total, reason: nil, context: breakdown.context)
         } catch { return .unavailable(error.localizedDescription) }
     }
 }
@@ -221,7 +232,7 @@ enum Logs {
             guard delta.numbers.allSatisfy({ $0 >= 0 }) else { issues.insert("Token counters reset"); continue }
             guard tokenKeys.allSatisfy({ total[$0] is NSNumber }), let last = info["last_token_usage"] as? [String: Any], tokenKeys.allSatisfy({ last[$0] is NSNumber }) else { issues.insert("Incomplete token counters"); continue }
             guard Usage(last) == delta else { issues.insert("Usage delta does not match a request"); continue }
-            calls.append(Call(model: model, usage: delta))
+            calls.append(Call(model: model, usage: delta, timestamp: (event["timestamp"] as? String).flatMap(parseDate)))
         }
         guard !id.isEmpty else { throw Failure.message("Missing conversation ID") }
         return Session(id: id, file: url, date: date, title: titles[id] ?? "Untitled", models: models, calls: calls, usage: previous, issues: issues.sorted(), guardianSource: guardian)
