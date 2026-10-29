@@ -8,6 +8,9 @@ import Observation
     var followToday = true
     var availableDays: Set<Date> = []
     var sessions: [Session] = []
+    var allSessions: [Session] = []
+    private var appliedRange: DayRange?
+    private var appliedTimeZone = TimeZone.current
     var estimates: [String: Estimate] = [:]
     var catalog: Catalog?
     var networkStatus = ""
@@ -84,14 +87,25 @@ import Observation
             rescanPending = false
             if followToday && range != .today { range = .today }
             let selected = range
-            let result = await logs.scan(folders: selected.folders(root: Logs.root))
+            let zone = TimeZone.current
+            let scopeChanged = appliedRange != selected || appliedTimeZone != zone
+            let result = await logs.scan()
             updatedIDs.formUnion(result.updatedSessionIDs)
-            let days = await logs.conversationDays()
+            let days = Set(result.sessions.flatMap { $0.calls.compactMap(\.timestamp) }.map { Calendar.current.startOfDay(for: $0) })
             if days != availableDays { availableDays = days }
-            if range == selected {
-                if result.changed { sessions = result.sessions; updateEstimates(changedIDs: updatedIDs) }
+            if range == selected && TimeZone.current == zone {
+                if result.changed || scopeChanged {
+                    allSessions = result.sessions
+                    sessions = result.sessions.map { $0.scoped(to: selected) }
+                        .filter { !$0.calls.isEmpty }
+                        .sorted { ($0.firstActivity ?? .distantPast) < ($1.firstActivity ?? .distantPast) }
+                    updateEstimates(changedIDs: scopeChanged ? nil : updatedIDs)
+                    appliedRange = selected; appliedTimeZone = zone
+                }
                 updatedIDs.removeAll()
-                logStatus = result.errors.joined(separator: "\n")
+                let incomplete = result.sessions.filter { !$0.issues.isEmpty }.count
+                let warnings = incomplete > 0 ? ["Incomplete usage coverage in \(incomplete.formatted()) conversations. Period estimates may be unavailable; only validated requests are listed."] : []
+                logStatus = (result.errors + warnings).joined(separator: "\n")
             } else { rescanPending = true }
         } while rescanPending && !Task.isCancelled
         scanning = false
@@ -279,7 +293,8 @@ struct MainView: View {
     var body: some View {
         GeometryReader { geometry in content(compact: geometry.size.width < 900) }
             .sheet(item: $detail) { session in
-                DetailView(session: store.sessions.first(where: { $0.id == session.id }) ?? session, catalog: store.catalog)
+                DetailView(session: store.allSessions.first(where: { $0.id == session.id }) ?? session,
+                           range: store.range, catalog: store.catalog)
             }
     }
     private func content(compact: Bool) -> some View {
@@ -318,7 +333,7 @@ struct MainView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Select a date").font(.headline)
                             RangeCalendar(range: $draft, availableDays: store.availableDays)
-                            Text("Shift-click to select a range. Grey days have no conversations.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text("Shift-click to select a range. Grey days have no dated usage.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             Text(draft.label).font(.subheadline.monospacedDigit())
                             HStack {
                                 Button("Cancel") { calendarOpen = false }.keyboardShortcut(.cancelAction)
@@ -345,7 +360,7 @@ struct MainView: View {
                         .disabled(store.fetching)
                 }
             }.padding(.horizontal, 20).padding(.bottom, 14)
-            Text("Usage updates for any selected dates. Auto-select today follows the current day; choosing dates turns it off. Enabled on each launch.")
+            Text("Selected period · " + store.range.label + " · Requests are counted on their recorded local day.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 20).padding(.bottom, 10)
             Divider()
@@ -353,12 +368,12 @@ struct MainView: View {
                 Table(filtered, selection: $selection) { sessionColumns(compact: true) }
             } else {
                 Table(filtered, selection: $selection) {
-                    TableColumn("Date") { s in Text(s.date, format: .dateTime.day().month().year()).monospacedDigit() }.width(100)
-                    TableColumn("Time") { s in Text(s.date, format: .dateTime.hour().minute().second()).monospacedDigit() }.width(85)
+                    TableColumn("Activity date") { s in Text(s.firstActivity.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "Unknown").monospacedDigit() }.width(100)
+                    TableColumn("First usage") { s in Text(s.firstActivity.map { $0.formatted(date: .omitted, time: .standard) } ?? "—").monospacedDigit() }.width(85)
                     sessionColumns(compact: false)
                 }
             }
-            if filtered.isEmpty { Text("No conversations in this date range.").foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 8) }
+            if filtered.isEmpty { Text("No recorded usage in this selection.").foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 8) }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 controlsLayout {
@@ -388,7 +403,7 @@ struct MainView: View {
                     }.help("Open in Codex: \(s.title)")
                 } else { Text(s.title).lineLimit(1).truncationMode(.tail).help(s.title) }
                 if compact {
-                    Text(s.date, format: .dateTime.day().month().year().hour().minute().second())
+                    Text(s.firstActivity.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "Date unknown")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -407,7 +422,9 @@ struct MainView: View {
 }
 struct DetailView: View {
     let session: Session
+    let range: DayRange
     let catalog: Catalog?
+    @State private var entireConversation = false
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         ScrollViewReader { scroll in
@@ -422,24 +439,32 @@ struct DetailView: View {
                         }.accessibilityLabel("Copy conversation ID")
                     }
                     Text(session.models.joined(separator: ", ")).foregroundStyle(.secondary)
-                    let estimate = session.estimate(catalog)
-                    Text(dollars(estimate.cost)).font(.largeTitle.monospacedDigit())
-                    if let reason = estimate.reason { Label(reason, systemImage: "info.circle").foregroundStyle(.orange) }
-                    Grid(alignment: .leading, horizontalSpacing: 35, verticalSpacing: 9) {
-                        row("Total input (including cache)", session.usage.input)
-                        row("Cached input (read)", session.usage.cache)
-                        row("Cache writes", session.usage.write)
-                        row("Ordinary input", session.usage.input-session.usage.cache-session.usage.write)
-                        row("Output, including reasoning", session.usage.output)
-                        row("Of which reasoning (do not add)", session.usage.reasoning)
-                        row("Usable requests", Int64(session.calls.count))
+                    let scoped = session.scoped(to: range)
+                    let displayed = entireConversation ? session : scoped
+                    let estimate = scoped.estimate(catalog)
+                    let entireEstimate = session.estimate(catalog)
+                    HStack(alignment: .top, spacing: 12) {
+                        summary("Selected period", dates: range.label, estimate: estimate, count: scoped.calls.count, highlighted: !entireConversation) { entireConversation = false }
+                        summary("Entire conversation", dates: session.activityRange?.label ?? "No dated activity", estimate: entireEstimate, count: session.calls.count, highlighted: entireConversation) { entireConversation = true }
                     }
-                    let breakdowns = session.pricingBreakdowns(catalog)
+                    Text(entireConversation ? "Details · Entire conversation" : "Details · Selected period · " + range.label)
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Created " + session.date.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary)
+                    Grid(alignment: .leading, horizontalSpacing: 35, verticalSpacing: 9) {
+                        row("Total input (including cache)", displayed.usage.input)
+                        row("Cached input (read)", displayed.usage.cache)
+                        row("Cache writes", displayed.usage.write)
+                        row("Ordinary input", displayed.usage.input-displayed.usage.cache-displayed.usage.write)
+                        row("Output, including reasoning", displayed.usage.output)
+                        row("Of which reasoning (do not add)", displayed.usage.reasoning)
+                        row("Usable requests", Int64(displayed.calls.count))
+                    }
+                    let breakdowns = displayed.pricingBreakdowns(catalog)
                     if breakdowns.isEmpty {
                         Text("No pricing applied: no request estimate is available.").font(.caption).foregroundStyle(.secondary)
                     } else {
-                        if estimate.cost == nil {
-                            Text("Pricing below applies only to available request estimates; the conversation estimate is unavailable.")
+                        if (entireConversation ? entireEstimate : estimate).cost == nil {
+                            Text("Pricing below applies only to available request estimates; the estimate for this scope is unavailable.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         ForEach(breakdowns, id: \.id) { applied in AppliedPricingView(applied: applied, showModel: session.models.count > 1) }
@@ -447,10 +472,30 @@ struct DetailView: View {
                     Text("Estimates sum cumulative-counter deltas, checked against each request. A partial line is read again after the file changes. An ongoing response is included only after Codex records its usage.").font(.caption).foregroundStyle(.secondary)
                     Button("Show log in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
                     Divider()
-                    RequestTable(session: session, catalog: catalog, scroll: scroll)
+                    RequestTable(session: session, range: range, catalog: catalog, scroll: scroll, entireConversation: entireConversation)
+                        .id(entireConversation)
                 }.padding(24)
             }.frame(width: 660, height: 650)
         }
+    }
+    private func summary(_ title: String, dates: String, estimate: Estimate, count: Int, highlighted: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                Text(dates).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                Text(dollars(estimate.cost)).font(.title.monospacedDigit().weight(highlighted ? .bold : .regular))
+                Text("\(count.formatted()) \(count == 1 ? "request" : "requests")").monospacedDigit()
+                if let reason = estimate.reason { Text(reason).font(.caption).foregroundStyle(.orange) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(highlighted ? Color.accentColor.opacity(0.10) : Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(highlighted ? Color.accentColor : Color.clear, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(highlighted ? .isSelected : [])
+        .help("Show tokens, applied pricing and requests for " + title.lowercased())
     }
     func row(_ title: String, _ value: Int64) -> some View {
         GridRow { Text(title); Text(value.formatted(.number.locale(Locale.autoupdatingCurrent))).monospacedDigit() }
@@ -503,56 +548,86 @@ struct RequestRow: Identifiable {
 
 struct RequestTable: View {
     let session: Session
+    let range: DayRange
     let catalog: Catalog?
     let scroll: ScrollViewProxy
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var selection: Int?
+    let entireConversation: Bool
     var body: some View {
-        let rows = session.calls.enumerated().map { RequestRow(index: $0.offset, call: $0.element, catalog: catalog) }
+        let allRows = session.calls.enumerated().map { RequestRow(index: $0.offset, call: $0.element, catalog: catalog) }
+        let datedRows = allRows.filter { $0.call.timestamp != nil }
+        let rows = entireConversation ? datedRows : datedRows.filter { $0.call.timestamp.map { range.contains($0) } ?? false }
+        let undatedRows = allRows.filter { $0.call.timestamp == nil }
         VStack(alignment: .leading, spacing: 10) {
             Text("Individual requests").font(.headline)
-            Text("Recorded usage events, in log order. Select a row to inspect its token counters.")
+            Text(entireConversation ? "Entire conversation" : "Selected period · " + range.label)
+                .font(.subheadline).foregroundStyle(.secondary)
+            Text("Showing \(rows.count.formatted()) of \(datedRows.count.formatted()) dated requests · in log order. Select a row to inspect its token counters.")
                 .font(.caption).foregroundStyle(.secondary)
             if !session.issues.isEmpty {
                 Text("Incomplete coverage: \(session.issues.joined(separator: " · ")). Only validated requests are listed.")
                     .font(.caption).foregroundStyle(.orange)
             }
+            RequestList(rows: rows, label: "Dated requests", scroll: scroll)
+            if !undatedRows.isEmpty {
+                Divider()
+                Text("Undated requests (\(undatedRows.count.formatted()))").font(.headline)
+                Text("These requests are undated, but belong to this conversation. They are excluded from daily and period totals.")
+                    .font(.caption).foregroundStyle(.secondary)
+                RequestList(rows: undatedRows, label: "Undated requests", scroll: scroll)
+            }
+            Text("Dates and times are usage-event timestamps in the local time zone, not request start times. Usage crossing midnight belongs to the recorded event day. Input includes cache; output includes reasoning. Repeated unchanged events are excluded.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct RequestList: View {
+    let rows: [RequestRow]
+    let label: String
+    let scroll: ScrollViewProxy
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selection: Int?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
             if rows.isEmpty {
-                Text("No validated requests recorded.").foregroundStyle(.secondary)
+                Text("No dated requests in this selection.").foregroundStyle(.secondary)
             } else {
                 Table(rows, selection: $selection) {
-                    TableColumn("#") { row in Text(row.id.formatted()) }.width(28)
+                    TableColumn("#") { row in Text(row.id.formatted()) }.width(24)
+                    TableColumn("Date") { row in
+                        Text(row.call.timestamp.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "Unknown")
+                            .help(row.call.timestamp.map { $0.formatted(date: .complete, time: .standard) } ?? "Timestamp not recorded")
+                    }.width(85)
                     TableColumn("Time") { row in
                         Text(row.call.timestamp.map { $0.formatted(date: .omitted, time: .standard) } ?? "—")
                             .help(row.call.timestamp.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "Timestamp not recorded")
-                    }.width(80)
+                    }.width(72)
                     TableColumn("Model") { row in
                         Text(row.call.model ?? "Not recorded").lineLimit(1).help(row.call.model ?? "Model not recorded")
-                    }.width(min: 100, ideal: 130, max: .infinity)
+                    }.width(min: 65, ideal: 85, max: .infinity)
                     TableColumn("Context") { row in
                         Text(row.context == "Published rates without a context threshold" ? "Unspecified" : row.context)
                             .lineLimit(1).help(row.context)
                     }.width(105)
                     TableColumn("Estimated cost") { row in
                         Text(dollars(row.estimate.cost)).help(row.estimate.reason ?? "Standard API equivalent")
-                    }.width(100)
+                    }.width(90)
                 }
                 .monospacedDigit()
-                .frame(height: CGFloat(min(rows.count, 7)) * 28 + 32)
-                .accessibilityLabel("Individual requests")
+                .frame(height: CGFloat(min(rows.count, 7)) * 28 + 48)
+                .accessibilityLabel(label)
                 if let selected = rows.first(where: { $0.id == selection }) {
                     RequestDetails(row: selected)
-                        .id("request-details")
+                        .id("request-details-" + label)
                         .task(id: selected.id) {
                             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                                scroll.scrollTo("request-details", anchor: .bottom)
+                                scroll.scrollTo("request-details-" + label, anchor: .bottom)
                             }
                         }
                 }
             }
-            Text("Times are usage-event timestamps, not request start times. Input includes cache; output includes reasoning. Repeated unchanged events are excluded.")
-                .font(.caption).foregroundStyle(.secondary)
         }
+        .onChange(of: rows.map(\.id)) { _, _ in selection = nil }
     }
 }
 

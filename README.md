@@ -56,9 +56,17 @@ Requests with cache writes are currently unavailable because their retention dur
 
 The info panel shows only the model/context price grids used by available request estimates. Checked components contributed tokens; unchecked components were unused. If the conversation total is unavailable, those grids describe only the requests that could be priced.
 
+### Usage dates
+
+Days and inclusive date ranges count requests by their recorded usage-event date in the Mac's local time zone. A conversation resumed on another day appears there with only that day's tokens and cost. Across a range it appears once, with the period's total. **Activity date** and **First usage** show the earliest included event; creation remains metadata in the info panel.
+
+Two summary blocks compare **Selected period** (a day or date range) with **Entire conversation**, each showing its dates, estimated cost and request count. Click either block to choose the detail scope; the active block is highlighted. Token counters, applied pricing and requests below all follow that choice. Both summary values and the main calendar stay unchanged. Original request numbers are preserved.
+
+Usage crossing midnight belongs to its recorded event day, not an inferred request start or duration split. Requests with missing or invalid timestamps appear separately under **Undated requests** in their conversation details, in both request scopes. They belong to the conversation and its full estimate, but not to daily or period totals or calendar availability. A conversation with no dated requests cannot be placed in the daily list. Session-wide parsing issues and mixed models can keep a period estimate unavailable even when the affected event is outside the period.
+
 ### Inspect individual requests
 
-Conversation totals, counters, applied pricing and log information appear first in the info panel. An **Individual requests** table appears at the bottom, in log order, with a sequence number, recorded usage-event time, model, context tier and estimated cost for each request. Select a row to inspect its input, cached reads, cache writes and output counters, full timestamp and any unavailable-estimate reason. Request details also show reasoning tokens (already included in output), input excluding cache, output excluding reasoning, and cached reads as a percentage of total input (unavailable when total input is zero). A cost breakdown shows ordinary input, cached reads and output using the same unrounded Decimal calculation as the request total; components are unavailable when the request cannot be priced. Reasoning is not charged again. Display rounding can make component amounts differ from the displayed total when added. The panel automatically scrolls to reveal the selected request’s details, including when navigating with the keyboard. Hover over a time, model, context or cost for its full value or explanation. The table scrolls for longer conversations.
+The selected scope’s totals, counters, applied pricing and log information appear first in the info panel. An **Individual requests** table appears at the bottom, in log order, with a sequence number, recorded usage-event date and time, model, context tier and estimated cost for each request. Select a row to inspect its input, cached reads, cache writes and output counters, full timestamp and any unavailable-estimate reason. Request details also show reasoning tokens (already included in output), input excluding cache, output excluding reasoning, and cached reads as a percentage of total input (unavailable when total input is zero). A cost breakdown shows ordinary input, cached reads and output using the same unrounded Decimal calculation as the request total; components are unavailable when the request cannot be priced. Reasoning is not charged again. Display rounding can make component amounts differ from the displayed total when added. The panel automatically scrolls to reveal the selected request’s details, including when navigating with the keyboard. Hover over a time, model, context or cost for its full value or explanation. The table scrolls for longer conversations.
 
 There is no context-group summary in the request section: context is shown per request. A usage timestamp is not an inferred request start time; missing timestamps remain explicit. Request estimates do not replace an unavailable conversation estimate or imply complete coverage. Repeated unchanged usage events do not create duplicate requests.
 
@@ -82,7 +90,7 @@ The app reads:
 - Archived logs: `~/.codex/archived_sessions/rollout-*.jsonl`.
 - Conversation titles: `~/.codex/session_index.jsonl`.
 
-There is no custom Codex-home setting. Archived conversations retain their original local creation date. Duplicate IDs are counted once, preferring an active copy; copied parent metadata does not replace a fork's identity.
+There is no custom Codex-home setting. Active and archived conversations use recorded activity dates, rather than creation or archive dates. Duplicate IDs are counted once, preferring an active copy; copied parent metadata does not replace a fork's identity.
 
 **Work conversations are not currently covered.** Guardian Reviews are excluded from rows, totals and calendar availability. Coverage depends on local files and their evolving format, not on all devices, accounts or Codex surfaces. A missing conversation does not imply zero usage.
 
@@ -102,7 +110,7 @@ The last valid pricing catalogue is saved at `~/Library/Application Support/Code
 
 Usage updates for any selected date range. **Auto-select today** starts enabled on each launch and follows day changes at the next log check. Selecting dates disables it; cancelling the calendar preserves the selection and mode.
 
-Filesystem notifications refresh usage promptly while a window is visible and batch updates while all windows are hidden or obscured. Showing a window or waking the Mac triggers a check. A recovery loop waits 60 seconds between checks; sleep, suspension and scan duration can delay it. This is not a guaranteed midnight deadline. Only changed logs are reparsed; price refreshes are independent.
+Filesystem notifications refresh usage promptly while a window is visible and batch updates while all windows are hidden or obscured. Showing a window or waking the Mac triggers a check. A recovery loop waits 60 seconds between checks; sleep, suspension and scan duration can delay it. This is not a guaranteed midnight deadline. The first scan reads all available logs to find activity in older conversations, which can increase startup time and memory use for large histories. Parsed logs and directory listings stay cached; only new or changed logs are reread. Changing the period reuses parsed requests. Price refreshes remain independent.
 
 ### Application releases
 

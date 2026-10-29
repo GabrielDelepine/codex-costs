@@ -52,6 +52,9 @@ struct Usage: Equatable {
         reasoning = (object["reasoning_output_tokens"] as? NSNumber)?.int64Value ?? 0
     }
     var isConsistent: Bool { numbers.allSatisfy { $0 >= 0 } && input >= cache + write && reasoning <= output }
+    static func + (a: Usage, b: Usage) -> Usage {
+        var u = Usage(); u.input = a.input+b.input; u.cache = a.cache+b.cache; u.write = a.write+b.write; u.output = a.output+b.output; u.reasoning = a.reasoning+b.reasoning; return u
+    }
     var numbers: [Int64] { [input, cache, write, output, reasoning] }
     static func - (a: Usage, b: Usage) -> Usage {
         var u = Usage(); u.input = a.input-b.input; u.cache = a.cache-b.cache; u.write = a.write-b.write; u.output = a.output-b.output; u.reasoning = a.reasoning-b.reasoning; return u
@@ -124,6 +127,20 @@ struct Session: Identifiable {
     func titled(_ newTitle: String) -> Session {
         Session(id: id, file: file, date: date, title: newTitle, models: models, calls: calls, usage: usage, issues: issues, guardianSource: guardianSource)
     }
+    func scoped(to range: DayRange) -> Session {
+        let selected = calls.filter { call in
+            return call.timestamp.map { range.contains($0) } ?? false
+        }
+        return Session(id: id, file: file, date: date, title: title, models: models,
+                       calls: selected, usage: selected.reduce(Usage()) { $0 + $1.usage },
+                       issues: issues, guardianSource: guardianSource)
+    }
+    var firstActivity: Date? { calls.compactMap(\.timestamp).min() }
+    var activityRange: DayRange? {
+        let dates = calls.compactMap(\.timestamp)
+        guard let first = dates.min(), let last = dates.max() else { return nil }
+        return DayRange(first, last)
+    }
     var codexURL: URL? {
         guard !isGuardianReview else { return nil }
         return URL(string: "codex://threads/" + id)
@@ -177,19 +194,6 @@ enum Logs {
         let subagent = source?["subagent"] as? [String: Any]
         return subagent?["other"] as? String == "guardian"
     }
-    // Calendar classification reads only a bounded header, not usage or conversation contents.
-    static func guardianHeader(_ url: URL) -> Bool {
-        guard let file = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? file.close() }
-        guard let data = try? file.read(upToCount: 65_536) else { return false }
-        let text = String(decoding: data, as: UTF8.self)
-        for line in text.split(separator: "\n") {
-            guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], let p = event["payload"] as? [String: Any] else { continue }
-            if event["type"] as? String == "session_meta", guardianSource(p) { return true }
-            if event["type"] as? String == "turn_context", p["model"] as? String == "codex-auto-review" { return true }
-        }
-        return false
-    }
     static func creationDay(_ file: URL) -> Date? {
         let name = file.lastPathComponent
         guard name.hasPrefix("rollout-"), name.hasSuffix(".jsonl") else { return nil }
@@ -239,7 +243,7 @@ enum Logs {
     }
 }
 
-// Calendar-day iteration rather than adding 86,400 s: daylight-saving days vary.
+// Local calendar days keep date ranges correct across daylight-saving changes.
 struct DayRange: Equatable {
     let start: Date
     let end: Date
@@ -248,17 +252,9 @@ struct DayRange: Equatable {
         self.end = calendar.startOfDay(for: max(start, end))
     }
     static var today: DayRange { DayRange(Date(), Date()) }
-    func folders(root: URL) -> [URL] {
-        let calendar = Calendar.current
-        let format = DateFormatter(); format.locale = Locale(identifier: "en_US_POSIX")
-        format.calendar = Calendar(identifier: .gregorian); format.dateFormat = "yyyy/MM/dd"
-        var day = start, result: [URL] = []
-        while day <= end {
-            result.append(root.appendingPathComponent("sessions/" + format.string(from: day)))
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day), next > day else { break }
-            day = next
-        }
-        return result
+    func contains(_ date: Date, calendar: Calendar = .current) -> Bool {
+        let day = calendar.startOfDay(for: date)
+        return day >= calendar.startOfDay(for: start) && day <= calendar.startOfDay(for: end)
     }
     var label: String {
         let f = DateFormatter(); f.locale = .autoupdatingCurrent; f.dateStyle = .medium; f.timeStyle = .none
@@ -287,10 +283,8 @@ actor SessionCache {
     private var entries: [URL: Entry] = [:]
     private var titles: [String: String] = [:]
     private var indexStamp: Stamp?
-    private var lastFolders: [URL] = []
     private var lastErrors: [String] = []
     private var dayDirectories: [URL: (stamp: Stamp, files: [URL])] = [:]
-    private var guardianHeaders: [URL: (stamp: Stamp, guardian: Bool)] = [:]
     private var archiveStamp: Stamp?
     private var archiveFiles: [URL] = []
     init(root: URL = Logs.root) { self.root = root.resolvingSymlinksInPath() }
@@ -307,63 +301,41 @@ actor SessionCache {
         }
         return archiveFiles
     }
-    // Cache listings and bounded headers independently of usage parsing.
-    private func calendarConversation(_ file: URL) -> Bool {
-        guard let stamp = try? Stamp(file) else { return false }
-        if guardianHeaders[file]?.stamp != stamp {
-            guardianHeaders[file] = (stamp, Logs.guardianHeader(file))
-        }
-        let id = String(file.deletingPathExtension().lastPathComponent.suffix(36))
-        return guardianHeaders[file]?.guardian != true && titles[id]?.caseInsensitiveCompare("Guardian review") != .orderedSame
-    }
-    func conversationDays() -> Set<Date> {
+    // Discover all creation folders: an old rollout can contain today's activity.
+    // Directory listings and full parsed files are cached independently.
+    private func discoveredFiles() throws -> Set<URL> {
         let fm = FileManager.default
-        func directories(_ url: URL) -> [URL] {
-            ((try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey])) ?? []).filter {
+        func directories(_ url: URL) throws -> [URL] {
+            guard fm.fileExists(atPath: url.path) else { return [] }
+            return try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey]).filter {
                 (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-                && Int($0.lastPathComponent) != nil
+                    && Int($0.lastPathComponent) != nil
             }
         }
-        let format = DateFormatter(); format.locale = Locale(identifier: "en_US_POSIX"); format.dateFormat = "yyyy/MM/dd"
-        format.isLenient = false
-        var result = Set<Date>(), seen = Set<URL>(), seenFiles = Set<URL>()
-        for year in directories(root.appendingPathComponent("sessions")) {
-            for month in directories(year) {
-                for day in directories(month) {
+        var files = Set<URL>(), seen = Set<URL>()
+        for year in try directories(root.appendingPathComponent("sessions")) {
+            for month in try directories(year) {
+                for day in try directories(month) {
                     seen.insert(day)
-                    guard let stamp = try? Stamp(day) else { continue }
+                    let stamp = try Stamp(day)
                     if dayDirectories[day]?.stamp != stamp {
-                        let names = (try? fm.contentsOfDirectory(atPath: day.path)) ?? []
-                        let files = names.filter { $0.hasPrefix("rollout-") && $0.hasSuffix(".jsonl") }.map { day.appendingPathComponent($0) }
-                        dayDirectories[day] = (stamp, files)
+                        let urls = try fm.contentsOfDirectory(at: day, includingPropertiesForKeys: nil)
+                        dayDirectories[day] = (stamp, urls.filter {
+                            $0.lastPathComponent.hasPrefix("rollout-") && $0.pathExtension == "jsonl"
+                        })
                     }
-                    var hasConversations = false
-                    for file in dayDirectories[day]?.files ?? [] {
-                        seenFiles.insert(file)
-                        if calendarConversation(file) { hasConversations = true }
-                    }
-                    if hasConversations {
-                        let text = year.lastPathComponent + "/" + month.lastPathComponent + "/" + day.lastPathComponent
-                        if let date = format.date(from: text) { result.insert(Calendar.current.startOfDay(for: date)) }
-                    }
+                    files.formUnion(dayDirectories[day]?.files ?? [])
                 }
             }
         }
         for url in Array(dayDirectories.keys) where !seen.contains(url) { dayDirectories.removeValue(forKey: url) }
-        for file in (try? archivedFiles()) ?? [] {
-            seenFiles.insert(file)
-            if calendarConversation(file), let day = Logs.creationDay(file) {
-                result.insert(Calendar.current.startOfDay(for: day))
-            }
-        }
-        for url in Array(guardianHeaders.keys) where !seenFiles.contains(url) { guardianHeaders.removeValue(forKey: url) }
-        return result
+        files.formUnion(try archivedFiles())
+        return files
     }
-    func scan(folders: [URL]) -> ScanResult {
+    func scan() -> ScanResult {
         let fm = FileManager.default
-        var changed = folders != lastFolders, reads = 0, errors: [String] = []
+        var changed = false, reads = 0, errors: [String] = []
         var updatedSessionIDs = Set<String>()
-        lastFolders = folders
         let index = root.appendingPathComponent("session_index.jsonl")
         if fm.fileExists(atPath: index.path) {
             do {
@@ -387,25 +359,15 @@ actor SessionCache {
         } else if indexStamp != nil {
             titles = [:]; indexStamp = nil; changed = true
         }
-        var files = Set<URL>()
-        for folder in folders {
-            do {
-                let urls = try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-                files.formUnion(urls.filter { $0.pathExtension == "jsonl" && $0.lastPathComponent.hasPrefix("rollout-") })
-            } catch {
-                if fm.fileExists(atPath: folder.path) { errors.append("Cannot list logs in " + folder.path) }
-            }
+        let files: Set<URL>
+        do { files = try discoveredFiles() }
+        catch {
+            // Do not display stale estimates after an incomplete discovery pass.
+            let removed = Set(entries.values.map { $0.session.id })
+            entries.removeAll()
+            return ScanResult(sessions: [], errors: ["Cannot discover session logs"], changed: true,
+                              filesRead: 0, updatedSessionIDs: removed)
         }
-        // Archived rollouts are flat; their filenames retain the original local creation day.
-        let selectedFolders = Set(folders.map { $0.resolvingSymlinksInPath().path })
-        do {
-            for file in try archivedFiles() {
-                guard let day = Logs.creationDay(file),
-                      let folder = DayRange(day, day).folders(root: root).first,
-                      selectedFolders.contains(folder.path) else { continue }
-                files.insert(file)
-            }
-        } catch { errors.append("Cannot list archived session logs") }
         for url in Array(entries.keys) where !files.contains(url) {
             // Removing the preferred copy can expose a cached archive with different usage.
             if let removed = entries.removeValue(forKey: url) { updatedSessionIDs.insert(removed.session.id) }

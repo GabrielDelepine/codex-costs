@@ -54,7 +54,7 @@ struct RangeCalendar: View {
                             .background(selected ? Color.accentColor : (inside ? Color.accentColor.opacity(0.1) : Color.clear), in: RoundedRectangle(cornerRadius: 4))
                             .contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(!enabled)
-                        .help(enabled ? "Select date; Shift-click to extend the selection" : "No conversations available")
+                        .help(enabled ? "Select date; Shift-click to extend the selection" : "No dated usage available")
                         .accessibilityLabel(date.formatted(.dateTime.month().day().year().locale(Locale.autoupdatingCurrent)))
                         .accessibilityAddTraits(selected ? .isSelected : [])
                 }
