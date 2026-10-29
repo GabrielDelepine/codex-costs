@@ -229,7 +229,9 @@ A recovery check runs after each 60-second recovery wait, on visibility transiti
 
 ## Build from source
 
-Building requires a Mac with Xcode's Swift tools installed and selected. Xcode does not need to be open; there is no Xcode project or third-party package installation.
+Codex Costs is a native macOS app written in Swift. Omitting an Xcode project is a deliberate minimalist choice: a few source files, a build script and a small Makefile keep the development workflow simple and limit project configuration.
+
+Building requires a Mac with Xcode's Swift tools installed and selected. Xcode does not need to be open; there is no third-party package installation.
 
 ```sh
 git clone https://github.com/GabrielDelepine/codex-costs.git
@@ -238,6 +240,8 @@ cd codex-costs
 ```
 
 Use `./build.sh` to compile without launching. The script builds for the current Mac architecture, creates `build/Codex Costs.app`, generates the macOS icon resources and applies an ad-hoc signature. You can subsequently open the `.app` by double-clicking it.
+
+You can also use `make build` to compile, or `make run` to compile and launch the app.
 
 The script uses Apple's `swiftc`, `sips`, `iconutil` and `codesign`. It includes the MIT license and copyright notice in the app's `Contents/Resources/LICENSE` before signing. Generated files stay under the ignored `build/` directory; Swift's module cache is outside the repository.
 
