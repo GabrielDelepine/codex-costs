@@ -35,4 +35,5 @@ These rules apply to all generated text: chat replies, documentation, interface 
 - Be concise and direct. Use short, clear sentences and familiar, precise words. Keep one main idea per sentence.
 - Preserve the intended meaning and necessary context. Keep required details, evidence, qualifications, and disclosures, even when they need more space.
 - Remove repetition, filler, and unnecessary structure. Keep the length proportional to the task.
+- Keep GitHub messages easy for humans to review. Default to short titles, bodies, reviews, and comments that contain only what the reader needs to understand, assess, or test the change or problem.
 - Stay polite and respectful. When addressing people, phrase requests as courteous questions or suggestions. Avoid commands or a demanding tone.

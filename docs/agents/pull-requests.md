@@ -5,6 +5,7 @@ Follow the shared [writing style](../../AGENTS.md#writing-style) for titles, des
 ## Titles and descriptions
 
 - Write the title and description in English.
+- Default to a short description: one brief paragraph explaining the change, a compact validation summary, and specific manual checks when useful. Keep attribution to one sentence. Describe the final result, not the development history. Avoid exhaustive lists of files, checks, preserved behavior, or implementation details. Expand only for material risks or complexity.
 - Title the PR around the concrete change delivered by its commits.
 - Describe how the application's behavior changes. For changes without a user-facing effect, explain their concrete purpose and result.
 - Link to the related issue for the problem and context. Repeat only what is needed to understand the change without duplicating the issue.
