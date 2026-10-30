@@ -36,10 +36,16 @@ enum Failure: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
-func parseDate(_ value: String) -> Date? {
-    let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return f.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+// Confine reusable formatters to their caller; no shared mutable formatter state.
+private struct TimestampParser {
+    let fractional = ISO8601DateFormatter()
+    let whole = ISO8601DateFormatter()
+    init() { fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds] }
+    func date(_ value: String) -> Date? {
+        fractional.date(from: value) ?? whole.date(from: value)
+    }
 }
+func parseDate(_ value: String) -> Date? { TimestampParser().date(value) }
 let tokenKeys = ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"]
 struct Usage: Equatable {
     var input: Int64 = 0, cache: Int64 = 0, write: Int64 = 0, output: Int64 = 0, reasoning: Int64 = 0
@@ -202,8 +208,10 @@ enum Logs {
     }
     static func read(_ url: URL, titles: [String: String]) throws -> Session {
         let data = try Data(contentsOf: url)
-        guard let text = String(data: data, encoding: .utf8) else { throw Failure.message("Unreadable log") }
-        let lines = text.components(separatedBy: "\n")
+        guard String(data: data, encoding: .utf8) != nil else { throw Failure.message("Unreadable log") }
+        // JSONL boundaries are ASCII LF bytes. Avoid splitting the entire log as Unicode text.
+        let lines = data.split(separator: 0x0A, omittingEmptySubsequences: false)
+        let timestamps = TimestampParser()
         var id = "", model: String?, models: [String] = [], calls: [Call] = [], previous = Usage(), issues = Set<String>()
         var date = Date.distantPast, guardian = false, hasSessionMeta = false
         // Rollout filenames encode the local creation time, not UTC.
@@ -213,8 +221,8 @@ enum Logs {
             let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"; date = f.date(from: stamp) ?? date
         }
         for (index, line) in lines.enumerated() where !line.isEmpty {
-            guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
-                if index == lines.count-1 && !text.hasSuffix("\n") { break }
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else {
+                if index == lines.count-1 && data.last != 0x0A { break }
                 issues.insert("Invalid JSON line"); continue
             }
             let p = event["payload"] as? [String: Any] ?? [:]
@@ -223,7 +231,7 @@ enum Logs {
                 hasSessionMeta = true
                 guardian = guardian || guardianSource(p)
                 id = p["id"] as? String ?? id
-                if date == .distantPast, let stamp = p["timestamp"] as? String { date = parseDate(stamp) ?? date }
+                if date == .distantPast, let stamp = p["timestamp"] as? String { date = timestamps.date(stamp) ?? date }
             }
             if event["type"] as? String == "turn_context" {
                 model = p["model"] as? String
@@ -236,7 +244,7 @@ enum Logs {
             guard delta.numbers.allSatisfy({ $0 >= 0 }) else { issues.insert("Token counters reset"); continue }
             guard tokenKeys.allSatisfy({ total[$0] is NSNumber }), let last = info["last_token_usage"] as? [String: Any], tokenKeys.allSatisfy({ last[$0] is NSNumber }) else { issues.insert("Incomplete token counters"); continue }
             guard Usage(last) == delta else { issues.insert("Usage delta does not match a request"); continue }
-            calls.append(Call(model: model, usage: delta, timestamp: (event["timestamp"] as? String).flatMap(parseDate)))
+            calls.append(Call(model: model, usage: delta, timestamp: (event["timestamp"] as? String).flatMap(timestamps.date)))
         }
         guard !id.isEmpty else { throw Failure.message("Missing conversation ID") }
         return Session(id: id, file: url, date: date, title: titles[id] ?? "Untitled", models: models, calls: calls, usage: previous, issues: issues.sorted(), guardianSource: guardian)

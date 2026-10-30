@@ -12,6 +12,19 @@
 
 Verify relevant runtime changes: initial load, unchanged files, one-file updates, title-only edits, new/deleted/replaced files, partial writes, ranges, wake/recovery and network failure. Use temporary synthetic data rather than modifying real Codex logs.
 
+## Startup benchmark
+
+Compare fresh in-memory scans with unchanged refreshes using synthetic logs only:
+
+```sh
+startup_check_dir=$(mktemp -d)
+xcrun swiftc -O -swift-version 5 -parse-as-library Core.swift Tests/StartupBenchmark.swift -o "$startup_check_dir/startup-benchmark"
+"$startup_check_dir/startup-benchmark"
+rm -r "$startup_check_dir"
+```
+
+The fixture contains 48 files, 768 requests and about 120 MB of conversation content. Generation is outside the timed scans. Each of three runs uses a new session cache and checks that an unchanged refresh rereads no files. This measures log scans with warm filesystem caches, not full app startup or cold disk access.
+
 ## Versioning
 
 - Use `MAJOR.MINOR.PATCH`. Set the version in `build.sh` when preparing a release, not for each commit or local build.

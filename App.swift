@@ -27,7 +27,8 @@ import Observation
     private var watcher: LogWatcher?
     private let logs = SessionCache()
     private(set) var windowVisible = false
-    private var scanning = false
+    private(set) var scanning = false
+    private(set) var hasLoadedLogs = false
     private var rescanPending = false
     private var running = false
     private var monitoring: Task<Void, Never>?
@@ -82,6 +83,7 @@ import Observation
     func scan() async {
         if scanning { rescanPending = true; return }
         scanning = true
+        defer { scanning = false; hasLoadedLogs = true }
         var updatedIDs = Set<String>()
         repeat {
             rescanPending = false
@@ -108,7 +110,6 @@ import Observation
                 logStatus = (result.errors + warnings).joined(separator: "\n")
             } else { rescanPending = true }
         } while rescanPending && !Task.isCancelled
-        scanning = false
     }
     func filesChanged() {
         // FSEvents already batches writes. Never postpone a scan for a quiet period.
@@ -326,8 +327,8 @@ struct MainView: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text(dollars(total)).font(.title2.monospacedDigit().bold())
-                    Text("\(filtered.count - unavailable) estimated · \(unavailable) unavailable").foregroundStyle(.secondary).font(.caption)
+                    Text(store.hasLoadedLogs ? dollars(total) : "—").font(.title2.monospacedDigit().bold())
+                    Text(store.hasLoadedLogs ? "\(filtered.count - unavailable) estimated · \(unavailable) unavailable" : "Loading conversations…").foregroundStyle(.secondary).font(.caption)
                 }
             }.padding(20)
             controlsLayout {
@@ -392,7 +393,17 @@ struct MainView: View {
                 .accessibilityElement(children: .combine)
             }
             Divider()
-            if compact {
+            if !store.hasLoadedLogs {
+                VStack(spacing: 12) {
+                    ProgressView().progressViewStyle(.circular).controlSize(.regular)
+                        .accessibilityLabel("Loading conversations")
+                    Text("Loading conversations…").font(.headline)
+                    Text("Reading local logs and validating request usage.")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .combine)
+            } else if compact {
                 Table(filtered, selection: $selection) { sessionColumns(compact: true) }
             } else {
                 Table(filtered, selection: $selection) {
@@ -401,7 +412,14 @@ struct MainView: View {
                     sessionColumns(compact: false)
                 }
             }
-            if filtered.isEmpty { Text("No recorded usage in this selection.").foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 8) }
+            if store.hasLoadedLogs && store.scanning {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Updating conversations…")
+                }
+                .foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+            } else if store.hasLoadedLogs && filtered.isEmpty { Text("No recorded usage in this selection.").foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 8) }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 controlsLayout {

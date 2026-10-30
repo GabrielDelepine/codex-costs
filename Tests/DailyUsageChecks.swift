@@ -113,6 +113,41 @@ import Foundation
         try write([["type": "session_meta", "payload": ["id": "other"]]] + [reset], to: invalid)
         let invalidDateSession = try Logs.read(invalid, titles: [:])
         precondition(invalidDateSession.calls.count == 1 && invalidDateSession.calls[0].timestamp == nil)
+        // Reused formatters must accept mixed precision/offsets without retaining prior state.
+        let stamps = ["2026-10-27T10:00:00.123Z", "2026-10-27T12:00:00+02:00", "invalid-date", "2026-10-27T10:00:00Z"]
+        try write(stamps.enumerated().map { i, stamp in
+            event(stamp, total: counters(Int64((i + 1) * 100), output: Int64((i + 1) * 5)), last: counters(100))
+        }, to: invalid)
+        let mixedDates = try Logs.read(invalid, titles: [:])
+        precondition(mixedDates.calls.count == 4 && mixedDates.issues.isEmpty)
+        precondition(abs(mixedDates.calls[0].timestamp!.timeIntervalSince(parseDate(stamps[3])!) - 0.123) < 0.00001)
+        precondition(mixedDates.calls[1].timestamp == mixedDates.calls[3].timestamp)
+        precondition(mixedDates.calls[2].timestamp == nil)
+        // Byte-delimited JSONL preserves Unicode, CRLF, blank lines and complete final records.
+        try write(header + [["type": "response_item", "payload": ["text": "Text 🦊 café e\u{301}\nnext line"]], first], to: invalid)
+        let validText = try String(contentsOf: invalid, encoding: .utf8)
+        for text in [validText, "\n" + validText.replacingOccurrences(of: "\n", with: "\r\n"), String(validText.dropLast())] {
+            try Data(text.utf8).write(to: invalid)
+            let parsed = try Logs.read(invalid, titles: [:])
+            precondition(parsed.calls.count == 1 && parsed.calls[0].usage.input == 100 && parsed.issues.isEmpty)
+        }
+        // Invalid content is still rejected even in records unrelated to usage.
+        for bad in [#"{"type":"response_item","payload":"\q"}"#,
+                    #"{"type":"response_item","payload":"\uD800"}"#,
+                    #"{"type":"response_item","payload":01}"#, "[]", "{"] {
+            for suffix in ["\n", ""] {
+                try Data((validText + bad + suffix).utf8).write(to: invalid)
+                let parsed = try Logs.read(invalid, titles: [:])
+                precondition(parsed.calls.count == 1)
+                precondition(parsed.issues.contains("Invalid JSON line") == !suffix.isEmpty)
+            }
+        }
+        var invalidUTF8 = Data(validText.utf8); invalidUTF8.append(0xFF)
+        try invalidUTF8.write(to: invalid)
+        do {
+            _ = try Logs.read(invalid, titles: [:])
+            preconditionFailure("Invalid UTF-8 must remain unreadable")
+        } catch Failure.message(let message) { precondition(message == "Unreadable log") }
         // Calendar-day inclusion handles both 23-hour and 25-hour DST days.
         var paris = Calendar(identifier: .gregorian); paris.timeZone = TimeZone(identifier: "Europe/Paris")!
         for (stamp, hours) in [("2026-03-29T10:00:00Z", 23), ("2026-10-25T10:00:00Z", 25)] {
