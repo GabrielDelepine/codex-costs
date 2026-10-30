@@ -280,7 +280,7 @@ struct AboutView: View {
 struct MainView: View {
     @Environment(\.openWindow) private var openWindow
     @Bindable var store: Store
-    @State private var selection: String?
+    @State private var selection = Set<String>()
     @State private var detail: Session?
     @State private var search = ""
     @State private var calendarOpen = false
@@ -290,8 +290,13 @@ struct MainView: View {
     }
     var total: Decimal { filtered.reduce(0) { $0 + (store.estimate($1).cost ?? 0) } }
     var unavailable: Int { filtered.filter { store.estimate($0).cost == nil }.count }
+    var selectedSessions: [Session] { filtered.filter { selection.contains($0.id) } }
     var body: some View {
         GeometryReader { geometry in content(compact: geometry.size.width < 900) }
+            .onChange(of: filtered.map(\.id)) { _, ids in
+                selection.formIntersection(Set(ids))
+            }
+            .onChange(of: store.range) { _, _ in selection.removeAll() }
             .sheet(item: $detail) { session in
                 DetailView(session: store.allSessions.first(where: { $0.id == session.id }) ?? session,
                            range: store.range, catalog: store.catalog)
@@ -363,6 +368,29 @@ struct MainView: View {
             Text("Selected period · " + store.range.label + " · Requests are counted on their recorded local day.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 20).padding(.bottom, 10)
+            if !selectedSessions.isEmpty {
+                let selected = selectedSessions
+                let estimates = selected.map { store.estimate($0) }
+                let unavailable = estimates.filter { $0.cost == nil }.count
+                let total = estimates.reduce(Decimal.zero) { $0 + ($1.cost ?? 0) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Selection total: \(dollars(unavailable == selected.count ? nil : total))")
+                        .font(.headline).monospacedDigit()
+                    Text("\(selected.count) selected · \(selected.count - unavailable) estimated · \(unavailable) unavailable")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Shift-click to select a range. Command-click to add or remove conversations.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.blue.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.blue.opacity(0.45), lineWidth: 1)
+                }
+                .padding(.horizontal, 20).padding(.bottom, 10)
+                .accessibilityElement(children: .combine)
+            }
             Divider()
             if compact {
                 Table(filtered, selection: $selection) { sessionColumns(compact: true) }

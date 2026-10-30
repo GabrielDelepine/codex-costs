@@ -2,7 +2,7 @@
 
 A small native macOS app to compare local Codex token usage and estimate its cost at current OpenAI API rates. No API key, account, server or third-party dependencies are required.
 
-Pick a day or date range, compare conversations, and open the info panel for token counters and applied prices. Conversation titles open in Codex; IDs can be copied from the info panel. The interface is English, with dates and numbers formatted using macOS regional preferences.
+Pick a day or date range, compare conversations, and open the info panel for token counters and applied prices. Select a conversation to see its **Selection total**; Shift-click selects a range, and Command-click adds or removes rows. The selection total uses the selected period and excludes unavailable estimates. Conversation titles open in Codex; IDs can be copied from the info panel. The interface is English, with dates and numbers formatted using macOS regional preferences.
 
 [Download](https://github.com/GabrielDelepine/codex-costs/releases) · [Report a problem](https://github.com/GabrielDelepine/codex-costs/issues) · [Contribute](#contributing)
 
