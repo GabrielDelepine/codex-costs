@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
-version="1.1.0"
+version="1.2.0"
 commit_hash=""
 commit_date=""
 source_state="Unavailable"
