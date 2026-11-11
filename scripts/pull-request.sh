@@ -513,6 +513,7 @@ fetch_json() {
     if ! curl --disable --fail --silent --show-error --location \
         --connect-timeout 10 --max-time 30 \
         --header 'Accept: application/vnd.github+json' \
+        --header 'Cache-Control: no-cache' \
         "$1" --output "$temporary_directory/response.json"; then
         fail "GitHub is unreachable or its anonymous request limit has been reached. Try again later; no token is required."
     fi
@@ -543,6 +544,29 @@ function run(arguments) {
     return response.merge_commit_sha;
 }
 JAVASCRIPT
+}
+
+# GitHub can cache a pending response for 60 seconds, longer than this poll loop.
+# Use a distinct URL for every attempt and run before trusting the merge ref.
+resolve_test_merge() {
+    local attempt request_id
+    request_id=$(basename "$temporary_directory")
+    merge_commit=pending
+    for attempt in 1 2 3 4 5; do
+        fetch_json "$api_url/$pull_number?merge_check=$request_id-$attempt"
+        if ! merge_commit=$(parse_response detail); then
+            fail "GitHub returned invalid PR data. Try again shortly."
+        fi
+        [[ "$merge_commit" == pending ]] || break
+        printf '    GitHub is preparing the test merge (%s/5)…\n' "$attempt"
+        if [[ "$attempt" -lt 5 ]]; then sleep 2; fi
+    done
+    case "$merge_commit" in
+        closed) fail "This PR is no longer open." ;;
+        pending) fail "GitHub has not finished computing the test merge. Try again shortly." ;;
+        conflict) fail "GitHub cannot merge this PR automatically. Resolve its conflicts before testing." ;;
+    esac
+    [[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub did not provide a valid test merge commit."
 }
 
 printf '\n  %s%sCODEX COSTS%s  /  PR test\n' "$bold" "$cyan" "$reset"
@@ -642,21 +666,7 @@ printf '    Later changes to the target branch or the PR can change the result.\
 printf '    PRs with merge conflicts cannot be tested until those conflicts are resolved.\n'
 printf '    Publishing feedback and merging require separate choices after the test.\n'
 
-# Request fresh mergeability before trusting GitHub's synthetic merge ref.
-merge_commit=pending
-for attempt in 1 2 3 4 5; do
-    fetch_json "$api_url/$pull_number"
-    merge_commit=$(parse_response detail)
-    [[ "$merge_commit" == pending ]] || break
-    printf '    GitHub is preparing the test merge (%s/5)…\n' "$attempt"
-    sleep 2
-done
-case "$merge_commit" in
-    closed) fail "This PR is no longer open." ;;
-    pending) fail "GitHub has not finished computing the test merge. Try again shortly." ;;
-    conflict) fail "GitHub cannot merge this PR automatically. Resolve its conflicts before testing." ;;
-esac
-[[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub did not provide a valid test merge commit."
+resolve_test_merge
 
 # A private ref and --no-write-fetch-head avoid disturbing another session's
 # FETCH_HEAD. Never change origin or fetch into a local working branch.

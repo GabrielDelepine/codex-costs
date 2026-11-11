@@ -36,4 +36,4 @@ After an accepted rebase, or when the PR head was already prepared, the final qu
 
 Without a rebase, a separate confirmation lets you choose an enabled squash, merge or rebase method, or cancel. Permissions and readiness are rechecked. GitHub locks the operation to the tested PR head and enforces server protections; the target can still advance before processing because the merge API has no target-commit lock. The script does not enable auto-merge, enter a merge queue or delete branches.
 
-Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.
+Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of fresh merge-status polling, prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.

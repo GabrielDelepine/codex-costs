@@ -140,6 +140,69 @@ run_remote_git() {
     fi
 }
 
+# Exercise the real HTTP wrapper/parser with a cache that repeats a response per URL.
+for scenario in pending-ready pending-exhausted conflict closed invalid-hash offline invalid-json; do
+    (
+        temporary_directory="$checks_directory/merge-$scenario"
+        mkdir -p "$temporary_directory"
+        api_url=https://api.github.com/repos/owner/project/pulls
+        fixture_merge=1111111111111111111111111111111111111111
+        : >"$temporary_directory/requests"
+        : >"$temporary_directory/sleeps"
+        sleep() { printf '%s\n' "$1" >>"$temporary_directory/sleeps"; }
+        curl() {
+            local url='' output='' header='' seen=false count
+            while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                    --output) output="$2"; shift ;;
+                    --header)
+                        [[ "$2" == 'Cache-Control: no-cache' ]] && header=yes
+                        shift ;;
+                    https://*) url="$1" ;;
+                esac
+                shift
+            done
+            [[ "$header" == yes && -n "$output" && -n "$url" ]] || return 1
+            if /usr/bin/grep -Fqx "$url" "$temporary_directory/requests"; then seen=true; fi
+            printf '%s\n' "$url" >>"$temporary_directory/requests"
+            count=$(wc -l <"$temporary_directory/requests")
+            if [[ "$scenario" == offline ]]; then return 7; fi
+            if [[ "$scenario" == invalid-json ]]; then printf '{' >"$output"; return; fi
+            local state=open mergeable=true sha="$fixture_merge"
+            case "$scenario" in
+                pending-ready) [[ "$count" -eq 1 || "$seen" == true ]] && mergeable=null ;;
+                pending-exhausted) mergeable=null ;;
+                conflict) mergeable=false ;;
+                closed) state=closed ;;
+                invalid-hash) sha=invalid ;;
+            esac
+            printf '{"state":"%s","mergeable":%s,"merge_commit_sha":"%s"}\n' \
+                "$state" "$mergeable" "$sha" >"$output"
+        }
+        if [[ "$scenario" == pending-ready ]]; then
+            resolve_test_merge >"$temporary_directory/output"
+            assert_equal "$merge_commit" "$fixture_merge"
+            assert_equal "$(wc -l <"$temporary_directory/requests" | tr -d ' ')" 2
+            assert_equal "$(cat "$temporary_directory/sleeps")" 2
+        else
+            if (resolve_test_merge >"$temporary_directory/output" 2>&1); then exit 1; fi
+            case "$scenario" in
+                pending-exhausted)
+                    assert_equal "$(wc -l <"$temporary_directory/requests" | tr -d ' ')" 5
+                    assert_equal "$(wc -l <"$temporary_directory/sleeps" | tr -d ' ')" 4
+                    expected='has not finished computing' ;;
+                conflict) expected='Resolve its conflicts' ;;
+                closed) expected='no longer open' ;;
+                invalid-hash) expected='valid test merge commit' ;;
+                offline) expected='GitHub is unreachable' ;;
+                invalid-json) expected='invalid PR data' ;;
+            esac
+            /usr/bin/grep -q "$expected" "$temporary_directory/output"
+        fi
+    )
+    printf 'PASS fresh merge polling: %s\n' "$scenario"
+done
+
 # Empty input accepts only the explicit yes default; EOF never grants consent.
 ask_yes_no 'Default yes' yes <<< '' >/dev/null
 if ask_yes_no 'Default no' <<< '' >/dev/null; then exit 1; fi
