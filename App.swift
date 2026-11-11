@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Observation
+import Network
 
 @MainActor @Observable final class Store {
     let releases = ReleaseUpdates()
@@ -32,7 +33,9 @@ import Observation
     private var rescanPending = false
     private var running = false
     private var monitoring: Task<Void, Never>?
-    private var lastAttempt = Date.distantPast
+    private var pricingSchedule = PricingRefreshSchedule()
+    private var networkAvailable: Bool?
+    private let networkMonitor = NWPathMonitor()
     private let cache = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CodexCosts/pricing.json")
     init() {
         if let data = try? Data(contentsOf: cache) { catalog = try? Catalog.decode(data) }
@@ -59,9 +62,10 @@ import Observation
     func refreshPrices(force: Bool = false) async {
         guard !fetching else { return }
         let now = Date()
-        let lastSuccess = UserDefaults.standard.object(forKey: "lastDownload") as? Date ?? .distantPast
-        guard force || now.timeIntervalSince(max(lastAttempt, lastSuccess)) >= 6*3600 else { return }
-        lastAttempt = now; fetching = true
+        let lastSuccess = UserDefaults.standard.object(forKey: "lastDownload") as? Date
+        guard force || (networkAvailable != false && pricingSchedule.isDue(
+            at: now, lastSuccess: lastSuccess, hasCatalog: catalog != nil)) else { return }
+        pricingSchedule.started(at: now); fetching = true
         defer { fetching = false }
         do {
             var request = URLRequest(url: URL(string: "https://tools.pwa.ovh/api/v1/openai-pricing")!)
@@ -73,11 +77,13 @@ import Observation
             try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: cache, options: .atomic)
             catalog = fresh; updateEstimates()
-            UserDefaults.standard.set(now, forKey: "lastDownload")
+            UserDefaults.standard.set(Date(), forKey: "lastDownload")
+            pricingSchedule.succeeded()
             networkStatus = ""
         } catch {
-            // Avoid leaking localized French OS/network errors into the English UI.
-            networkStatus = catalog == nil ? "Pricing update failed. No saved prices available." : "Pricing update failed. Last downloaded prices retained."
+            pricingSchedule.failed(at: Date())
+            // Cached prices remain usable; their source retrieval date stays visible.
+            networkStatus = catalog == nil ? "Estimates unavailable until prices can be downloaded. Retrying automatically." : ""
         }
     }
     func scan() async {
@@ -160,11 +166,26 @@ import Observation
         let wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.wake() }
         }
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            // A usable route is a retry signal, not proof that the pricing server is reachable.
+            let available = path.status != .unsatisfied
+            Task { @MainActor [weak self] in
+                guard let self, self.running else { return }
+                let reconnected = self.networkAvailable == false && available
+                self.networkAvailable = available
+                if reconnected {
+                    self.pricingSchedule.networkRestored(at: Date())
+                    await self.refreshPrices()
+                }
+            }
+        }
+        networkMonitor.start(queue: DispatchQueue(label: "CodexCosts.pricing-network"))
         updateWindowVisibility()
         if watcher == nil { configureWatcher() }
         defer {
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            networkMonitor.cancel()
             watcher = nil; watching = false; running = false
         }
         await scan()

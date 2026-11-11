@@ -36,7 +36,7 @@ An `OK` result confirms the file matches the published checksum. It does not est
 
 Prices come from [tools.pwa.ovh](https://tools.pwa.ovh/openai-pricing), which cites [OpenAI's published pricing](https://developers.openai.com/api/docs/pricing). Only Standard API token rates in USD are used; Fast, Ultrafast, Batch and Flex rates are excluded.
 
-Refreshing prices recalculates visible conversations, including older ones. The footer's **via tools.pwa.ovh** date identifies when the source catalogue was retrieved, not the latest download attempt. Prices refresh every six hours while the app runs, or manually. Failed downloads preserve the last valid catalogue and its retrieval date; without one, estimates are unavailable.
+Refreshing prices recalculates visible conversations, including older ones. The footer's **via tools.pwa.ovh** date identifies when the source catalogue was retrieved, not the latest download attempt. Prices refresh every six hours while the app runs, or manually. Failed downloads preserve the last valid catalogue and its retrieval date without an error banner; without one, estimates are unavailable. Failures retry after 1, 5 and 15 minutes, then hourly. Automatic attempts pause while macOS reports no network route and resume when it returns, with at least one minute between attempts. Deadlines are checked every minute and on wake. Manual refresh bypasses the schedule.
 
 ### Token counting and pricing
 
