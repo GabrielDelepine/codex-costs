@@ -7,7 +7,7 @@ trap 'rm -rf "$checks_directory"' EXIT
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_TERMINAL_PROMPT=0
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL || true
-sed -n '/^# Use the terminal/,/^# Start the interactive workflow/{ /^# Start the interactive workflow/d; p; }' \
+sed -n '/^# Shared app launch/,/^# Start the interactive workflow/{ /^# Start the interactive workflow/d; p; }' \
     "$project_directory/scripts/pull-request.sh" >"$checks_directory/functions.sh"
 source "$checks_directory/functions.sh"
 ssh-keygen -q -t ed25519 -N '' -f "$checks_directory/signing-key"
@@ -24,12 +24,19 @@ assert_equal() {
 }
 
 # Check the launch boundary without opening an app or contacting GitHub.
-for scenario in normal offline packet-loss both inherited override; do
+for scenario in normal offline packet-loss both inherited override env-offline env-packet-loss env-both env-zero env-flag; do
     (
-        unset CODEX_COSTS_SIMULATE_OFFLINE CODEX_COSTS_SIMULATE_PACKET_LOSS || true
+        unset OFFLINE PACKET_LOSS CODEX_COSTS_SIMULATE_OFFLINE CODEX_COSTS_SIMULATE_PACKET_LOSS || true
         expected_offline=0
         expected_loss=0
         case "$scenario" in
+            env-offline) OFFLINE=1; parse_arguments; expected_offline=1 ;;
+            env-packet-loss) PACKET_LOSS=1; parse_arguments; expected_loss=1 ;;
+            env-both) OFFLINE=1; PACKET_LOSS=1; parse_arguments; expected_offline=1; expected_loss=1 ;;
+            env-zero)
+                CODEX_COSTS_SIMULATE_OFFLINE=1; CODEX_COSTS_SIMULATE_PACKET_LOSS=1
+                OFFLINE=0; PACKET_LOSS=0; parse_arguments ;;
+            env-flag) OFFLINE=0; parse_arguments --offline; expected_offline=1 ;;
             normal) parse_arguments ;;
             offline) parse_arguments --offline; expected_offline=1 ;;
             packet-loss) parse_arguments --packet-loss; expected_loss=1 ;;
@@ -43,9 +50,19 @@ for scenario in normal offline packet-loss both inherited override; do
                 parse_arguments --offline --offline
                 expected_offline=1 ;;
         esac
+        expected_mode=Normal
+        if [[ "$expected_offline" == 1 && "$expected_loss" == 1 ]]; then
+            expected_mode='Offline (100% packet loss also enabled; Offline takes precedence)'
+        elif [[ "$expected_offline" == 1 ]]; then
+            expected_mode=Offline
+        elif [[ "$expected_loss" == 1 ]]; then
+            expected_mode='100% packet loss'
+        fi
+        show_network_testing >"$checks_directory/network-help"
+        /usr/bin/grep -Fq "Selected mode: $expected_mode" "$checks_directory/network-help"
         test_app="$checks_directory/App with spaces.app"
         open() { printf '%s\n' "$@" >"$checks_directory/launch-arguments"; }
-        launch_test_app
+        launch_app "$test_app" -W
         assert_equal "$(cat "$checks_directory/launch-arguments")" \
             "$(printf '%s\n' -n -W --env "CODEX_COSTS_SIMULATE_OFFLINE=$expected_offline" \
                 --env "CODEX_COSTS_SIMULATE_PACKET_LOSS=$expected_loss" "$test_app")"
@@ -58,6 +75,18 @@ make -s -C "$project_directory" pr ARGS=--help >"$checks_directory/help"
 if /bin/bash "$project_directory/scripts/pull-request.sh" --unknown >"$checks_directory/invalid" 2>&1; then exit 1; fi
 /usr/bin/grep -q 'Unknown option: --unknown' "$checks_directory/invalid"
 printf 'PASS make argument forwarding, help and invalid-option handling\n'
+
+# Noninteractive startup stops before GitHub access or any checkout changes.
+if OFFLINE=1 PACKET_LOSS=1 make -s -C "$project_directory" pr </dev/null >"$checks_directory/startup" 2>&1; then exit 1; fi
+/usr/bin/grep -Fq 'OFFLINE=1 make pr' "$checks_directory/startup"
+/usr/bin/grep -Fq 'PACKET_LOSS=1 make pr' "$checks_directory/startup"
+/usr/bin/grep -Fq 'Selected mode: Offline (100% packet loss also enabled; Offline takes precedence)' "$checks_directory/startup"
+/usr/bin/grep -Fq 'Run this script in an interactive terminal.' "$checks_directory/startup"
+for variable in OFFLINE PACKET_LOSS; do
+    if env "$variable=invalid" /bin/bash "$project_directory/scripts/pull-request.sh" >"$checks_directory/invalid-env" 2>&1; then exit 1; fi
+    /usr/bin/grep -Fq "$variable must be 0 or 1." "$checks_directory/invalid-env"
+done
+printf 'PASS make environment forwarding, startup guidance and invalid-value handling\n'
 
 setup_fixture() {
     fixture_directory="$checks_directory/$1"

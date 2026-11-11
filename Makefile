@@ -3,8 +3,8 @@
 build:
 	./build.sh
 
-run: build
-	open "build/Codex Costs.app"
+run:
+	./scripts/run.sh $(ARGS)
 
 pr: pull-request
 

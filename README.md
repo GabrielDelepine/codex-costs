@@ -128,7 +128,7 @@ cd codex-costs
 ./build.sh --open
 ```
 
-`./build.sh` builds without launching. It produces `build/Codex Costs.app` for the host architecture, includes the MIT license and applies an ad-hoc signature. `make build` and `make run` provide build and launch shortcuts.
+`./build.sh` builds without launching. It produces `build/Codex Costs.app` for the host architecture, includes the MIT license and applies an ad-hoc signature. `make build` and `make run` provide build and launch shortcuts. `make run` rebuilds, quits any running instance and opens the new app. Use `OFFLINE=1 make run` or `PACKET_LOSS=1 make run` to enable a [network simulation](docs/pull-request-testing.md#network-simulations); startup explains both modes and shows the selection.
 
 `make release` asks for a new `MAJOR.MINOR.PATCH` version from a clean checkout at the current remote default branch. It builds an isolated source checkout, commits any version change there using your Git signing configuration, and produces a host-architecture DMG and checksum under `build/release-VERSION/`. After confirmation it opens the DMG so you can copy the app to Applications and test it. Only after you confirm the app works does it generate release notes with the Codex CLI bundled in `/Applications/ChatGPT.app`, push a signed and verified tag, and create a GitHub draft release with the assets attached. No release branch is created. The tag retains any version commit. Review the draft at the printed link and publish it manually. GitHub CLI authentication, Codex authentication, and a working Git signing key are required. Existing output directories and tags are never overwritten; after a failure, inspect them before retrying. Never reuse a version for a different distributed artifact.
 
@@ -158,7 +158,7 @@ Focused release-update checks are described in the [runtime guide](docs/agents/r
 
 Run `make pr` (or `make pull-request`) in a macOS terminal and enter a listed PR number. Testing uses a temporary worktree and leaves your checkout unchanged. For PRs containing only your commits, you can approve a signed rebase that adds the PR number to commit titles and rewrites the remote PR branch with `--force-with-lease`. Only test code you trust: the PR's build runs with your user permissions. The script quits a running Codex Costs instance; the test app may share its preferences.
 
-Quit the test app completely to return to the terminal. Publishing results or screenshots and merging each require explicit choices. Failed tests never offer merging. Hold Option in the app menu to reveal network simulations, or start with `make pr ARGS="--offline"` or `make pr ARGS="--packet-loss"`. See the [testing guide](docs/pull-request-testing.md) for startup flags, requirements, privacy precautions and recovery details.
+Quit the test app completely to return to the terminal. Publishing results or screenshots and merging each require explicit choices. Failed tests never offer merging. Hold Option in the app menu to reveal network simulations, or start with `OFFLINE=1 make pr` or `PACKET_LOSS=1 make pr`. See the [testing guide](docs/pull-request-testing.md) for startup options, requirements, privacy precautions and recovery details.
 
 ## License
 

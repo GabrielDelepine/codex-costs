@@ -10,20 +10,10 @@ repository="GabrielDelepine/codex-costs"
 repository_url="https://github.com/$repository"
 api_url="https://api.github.com/repos/$repository/pulls"
 
-# Use the terminal's own palette so both light and dark themes stay legible.
-bold='' reset='' cyan='' green='' yellow='' red=''
-if [[ -t 1 && -t 2 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
-    bold=$'\033[1m'
-    reset=$'\033[0m'
-    cyan=$'\033[36m'
-    green=$'\033[32m'
-    yellow=$'\033[33m'
-    red=$'\033[31m'
-fi
-
-section() {
-    printf '\n  %s%s%s%s\n' "$bold" "$cyan" "$1" "$reset"
-}
+# Shared app launch and network simulation controls.
+launch_target=pr
+launch_script=pull-request.sh
+source "$project_directory/scripts/app-launch.sh"
 
 # Keep successful tool output quiet; show indented diagnostics on failure.
 run_quietly() {
@@ -36,45 +26,6 @@ run_quietly() {
 
     sed 's/^/    /' "$temporary_directory/command.log" >&2
     fail "$error_message"
-}
-
-fail() {
-    printf '\n    %s✕ Test stopped%s\n    %s\n\n' "$red$bold" "$reset" "$*" >&2
-    exit 1
-}
-
-usage() {
-    cat <<'HELP'
-Usage: ./scripts/pull-request.sh [--offline] [--packet-loss]
-       make pr ARGS="--offline"
-       make pr ARGS="--packet-loss"
-
-  --offline      Start the app with Simulate Offline enabled.
-  --packet-loss  Start the app with Simulate 100% Packet Loss enabled.
-  --help, -h     Show this help without contacting GitHub or launching the app.
-
-Flags can be combined; Offline takes precedence. GitHub access stays online.
-Make does not accept custom flags directly; pass them through ARGS.
-HELP
-}
-
-parse_arguments() {
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            --offline) CODEX_COSTS_SIMULATE_OFFLINE=1 ;;
-            --packet-loss) CODEX_COSTS_SIMULATE_PACKET_LOSS=1 ;;
-            --help|-h) usage; exit 0 ;;
-            *) fail "Unknown option: $1. Run ./scripts/pull-request.sh --help for usage." ;;
-        esac
-        shift
-    done
-}
-
-launch_test_app() {
-    open -n -W \
-        --env "CODEX_COSTS_SIMULATE_OFFLINE=${CODEX_COSTS_SIMULATE_OFFLINE:-0}" \
-        --env "CODEX_COSTS_SIMULATE_PACKET_LOSS=${CODEX_COSTS_SIMULATE_PACKET_LOSS:-0}" \
-        "$test_app"
 }
 
 # Bound authenticated network commands without changing user configuration.
@@ -611,6 +562,8 @@ printf '    Build and run a PR\n'
 printf '    (The PR will be tested as merged with its target branch so you can check\n'
 printf '    that the combined app works before merging it on GitHub.)\n'
 
+show_network_testing
+
 section 'How it works'
 printf '    %s1%s  Choose an open PR.\n' "$cyan" "$reset"
 printf '    %s2%s  Prepare an isolated test; optionally rebase your own commits.\n' "$cyan" "$reset"
@@ -731,32 +684,13 @@ run_quietly "Could not remove the test worktree; it will be retained for inspect
     git worktree remove "$test_worktree"
 rmdir "$worktree_directory"
 
-printf '\n    Quitting Codex Costs if it is already running…\n'
-# Checking running bundle identifiers avoids launching an app just to quit it.
-osascript <<'APPLESCRIPT'
-tell application "System Events"
-    set appIsRunning to exists (application processes whose bundle identifier is "ovh.pwa.codex-costs")
-end tell
-if appIsRunning then
-    tell application id "ovh.pwa.codex-costs" to quit
-end if
-APPLESCRIPT
-
-for attempt in 1 2 3 4 5; do
-    if ! pgrep -x CodexCosts >/dev/null; then
-        break
-    fi
-    sleep 1
-done
-if pgrep -x CodexCosts >/dev/null; then
-    fail "The app did not quit. Quit it manually, then run the script again."
-fi
+quit_running_app
 
 printf '\n    The test app will open. Quit the app completely to return here.\n'
 printf '    Your terminal will wait; closing only the app window is not enough.\n'
 test_started=$(date +%s)
 app_may_be_running=true
-if ! launch_test_app; then
+if ! launch_app "$test_app" -W; then
     fail "Could not confirm that the test app closed. Its files will be retained."
 fi
 app_may_be_running=false

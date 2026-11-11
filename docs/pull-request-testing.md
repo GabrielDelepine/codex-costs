@@ -11,16 +11,23 @@ Hold Option while opening the **Codex Costs** menu to reveal **Network Testing**
 
 Changing an option cancels in-flight work and reevaluates it under the new settings. Turning off packet loss allows a waiting request to proceed. Turning off Offline restores the latest system path and uses the normal reconnection schedule; it does not force a download of still-current prices. The footer shows when simulation is active. Choices reset on each launch.
 
-To start a PR test with either option enabled, use the updated test script:
+Both `make pr` and `make run` show the network commands and selected mode at startup. Use `make run` to test the current checkout, or `make pr` to choose a PR:
 
 ```sh
-make pr ARGS="--offline"
-make pr ARGS="--packet-loss"
+make pr
+OFFLINE=1 make pr
+PACKET_LOSS=1 make pr
+
+make run
+OFFLINE=1 make run
+PACKET_LOSS=1 make run
 ```
 
-`--packet-loss` means 100% simulated loss. Combine both with `ARGS="--offline --packet-loss"`; Offline takes precedence. Make rejects custom options such as `make pr --offline`, so pass script flags through `ARGS`. Direct invocation also works: `./scripts/pull-request.sh --offline`.
+`PACKET_LOSS=1` means 100% simulated loss. Combine both with `OFFLINE=1 PACKET_LOSS=1 make pr`; Offline takes precedence. The same combinations work with `make run`. Values must be `0` or `1`. GitHub requests made by the script remain online.
 
-The flags set `CODEX_COSTS_SIMULATE_OFFLINE=1` and `CODEX_COSTS_SIMULATE_PACKET_LOSS=1` for the launched app. Setting those environment variables directly still works. GitHub requests made by the script remain online. Without flags or environment overrides, both simulations start disabled. Use `make pr ARGS="--help"` for usage.
+The short variables set the app's `CODEX_COSTS_SIMULATE_OFFLINE` and `CODEX_COSTS_SIMULATE_PACKET_LOSS` launch variables. The long names remain supported; an explicit short value overrides the corresponding long value. Without overrides, both simulations start disabled. Direct script flags `--offline` and `--packet-loss` also remain supported and enable their simulation regardless of environment values. Use `./scripts/pull-request.sh --help` for usage.
+
+`make run` builds before quitting any running Codex Costs instance and opening the new app with the selected variables. A build failure leaves the running app alone. It returns after launching; `make pr` waits for the app to quit before collecting feedback.
 
 ## Isolation and app lifecycle
 
@@ -55,5 +62,7 @@ Merging is offered only after a successful test, with repository write access, a
 After an accepted rebase, or when the PR head was already prepared, the final question offers a fast-forward into `main`, defaulting to no. It pushes the exact tested head without force or a new merge commit. Readiness is checked again after confirmation. A divergent update to `main` rejects the push, and server branch protections still apply; the script does not bypass them. GitHub recognizes the PR as merged when its head becomes part of `main`.
 
 Without a rebase, a separate confirmation lets you choose an enabled squash, merge or rebase method, or cancel. Permissions and readiness are rechecked. GitHub locks the operation to the tested PR head and enforces server protections; the target can still advance before processing because the merge API has no target-commit lock. The script does not enable auto-merge, enter a merge queue or delete branches.
+
+Run `/bin/bash Tests/LaunchChecks.sh` to verify `make run` mode forwarding, startup help and build/quit/launch failures with mocked macOS commands.
 
 Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of simulation launch flags, fresh merge-status polling, prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.
