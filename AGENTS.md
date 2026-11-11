@@ -8,6 +8,7 @@ Keep Codex Costs a tiny, native, local macOS utility for understanding Codex tok
 - Keep logs read-only and private. Never upload conversation data or commit personal logs, caches, credentials or build output.
 - Prefer an explained unavailable estimate to a guessed cost. State assumptions and coverage gaps.
 - Keep changes focused. Update existing documentation when a change affects understanding, usage, or contribution; not every change needs a documentation addition. Distinguish implemented behavior from proposals.
+- Prefix every new or rewritten commit title with a Conventional Commits type: `feat:` for features, `fix:` for bug fixes, `docs:` for documentation, or `refactor:`, `test:`, `build:`, `ci:`, `perf:`, `style:` or `chore:` as appropriate. Use `type: short description` (or `type(scope): short description`) and preserve any PR reference at the end.
 
 Before modifying repository files, read [Git](docs/agents/git.md) and verify that the current directory is the dedicated Git worktree for this task. Reuse it when continuing the same task; otherwise, create a dedicated worktree and switch to its directory before editing. If the worktree cannot be created or verified, stop and report the blocker without modifying repository files. Keep the original checkout, its current branch, and any local changes unchanged. Follow the guide’s branch-isolation rules in the dedicated worktree.
 

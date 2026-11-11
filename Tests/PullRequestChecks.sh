@@ -7,7 +7,7 @@ trap 'rm -rf "$checks_directory"' EXIT
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_TERMINAL_PROMPT=0
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL || true
-sed -n '/^# Use the terminal/,/^printf .*CODEX COSTS/{ /^printf .*CODEX COSTS/d; p; }' \
+sed -n '/^# Shared app launch/,/^# Start the interactive workflow/{ /^# Start the interactive workflow/d; p; }' \
     "$project_directory/scripts/pull-request.sh" >"$checks_directory/functions.sh"
 source "$checks_directory/functions.sh"
 ssh-keygen -q -t ed25519 -N '' -f "$checks_directory/signing-key"
@@ -22,6 +22,71 @@ assert_equal() {
         exit 1
     fi
 }
+
+# Check the launch boundary without opening an app or contacting GitHub.
+for scenario in normal offline packet-loss both inherited override env-offline env-packet-loss env-both env-zero env-flag; do
+    (
+        unset OFFLINE PACKET_LOSS CODEX_COSTS_SIMULATE_OFFLINE CODEX_COSTS_SIMULATE_PACKET_LOSS || true
+        expected_offline=0
+        expected_loss=0
+        case "$scenario" in
+            env-offline) OFFLINE=1; parse_arguments; expected_offline=1 ;;
+            env-packet-loss) PACKET_LOSS=1; parse_arguments; expected_loss=1 ;;
+            env-both) OFFLINE=1; PACKET_LOSS=1; parse_arguments; expected_offline=1; expected_loss=1 ;;
+            env-zero)
+                CODEX_COSTS_SIMULATE_OFFLINE=1; CODEX_COSTS_SIMULATE_PACKET_LOSS=1
+                OFFLINE=0; PACKET_LOSS=0; parse_arguments ;;
+            env-flag) OFFLINE=0; parse_arguments --offline; expected_offline=1 ;;
+            normal) parse_arguments ;;
+            offline) parse_arguments --offline; expected_offline=1 ;;
+            packet-loss) parse_arguments --packet-loss; expected_loss=1 ;;
+            both) parse_arguments --packet-loss --offline; expected_offline=1; expected_loss=1 ;;
+            inherited)
+                CODEX_COSTS_SIMULATE_PACKET_LOSS=1
+                parse_arguments --offline
+                expected_offline=1; expected_loss=1 ;;
+            override)
+                CODEX_COSTS_SIMULATE_OFFLINE=0
+                parse_arguments --offline --offline
+                expected_offline=1 ;;
+        esac
+        expected_mode=Normal
+        if [[ "$expected_offline" == 1 && "$expected_loss" == 1 ]]; then
+            expected_mode='Offline (100% packet loss also enabled; Offline takes precedence)'
+        elif [[ "$expected_offline" == 1 ]]; then
+            expected_mode=Offline
+        elif [[ "$expected_loss" == 1 ]]; then
+            expected_mode='100% packet loss'
+        fi
+        show_network_testing >"$checks_directory/network-help"
+        /usr/bin/grep -Fq "Selected mode: $expected_mode" "$checks_directory/network-help"
+        test_app="$checks_directory/App with spaces.app"
+        open() { printf '%s\n' "$@" >"$checks_directory/launch-arguments"; }
+        launch_app "$test_app" -W
+        assert_equal "$(cat "$checks_directory/launch-arguments")" \
+            "$(printf '%s\n' -n -W --env "CODEX_COSTS_SIMULATE_OFFLINE=$expected_offline" \
+                --env "CODEX_COSTS_SIMULATE_PACKET_LOSS=$expected_loss" "$test_app")"
+    )
+    printf 'PASS simulation launch flags: %s\n' "$scenario"
+done
+
+make -s -C "$project_directory" pr ARGS=--help >"$checks_directory/help"
+/usr/bin/grep -q -- '--packet-loss' "$checks_directory/help"
+if /bin/bash "$project_directory/scripts/pull-request.sh" --unknown >"$checks_directory/invalid" 2>&1; then exit 1; fi
+/usr/bin/grep -q 'Unknown option: --unknown' "$checks_directory/invalid"
+printf 'PASS make argument forwarding, help and invalid-option handling\n'
+
+# Noninteractive startup stops before GitHub access or any checkout changes.
+if OFFLINE=1 PACKET_LOSS=1 make -s -C "$project_directory" pr </dev/null >"$checks_directory/startup" 2>&1; then exit 1; fi
+/usr/bin/grep -Fq 'OFFLINE=1 make pr' "$checks_directory/startup"
+/usr/bin/grep -Fq 'PACKET_LOSS=1 make pr' "$checks_directory/startup"
+/usr/bin/grep -Fq 'Selected mode: Offline (100% packet loss also enabled; Offline takes precedence)' "$checks_directory/startup"
+/usr/bin/grep -Fq 'Run this script in an interactive terminal.' "$checks_directory/startup"
+for variable in OFFLINE PACKET_LOSS; do
+    if env "$variable=invalid" /bin/bash "$project_directory/scripts/pull-request.sh" >"$checks_directory/invalid-env" 2>&1; then exit 1; fi
+    /usr/bin/grep -Fq "$variable must be 0 or 1." "$checks_directory/invalid-env"
+done
+printf 'PASS make environment forwarding, startup guidance and invalid-value handling\n'
 
 setup_fixture() {
     fixture_directory="$checks_directory/$1"
@@ -139,6 +204,69 @@ run_remote_git() {
         git push "$fixture_remote" "$3"
     fi
 }
+
+# Exercise the real HTTP wrapper/parser with a cache that repeats a response per URL.
+for scenario in pending-ready pending-exhausted conflict closed invalid-hash offline invalid-json; do
+    (
+        temporary_directory="$checks_directory/merge-$scenario"
+        mkdir -p "$temporary_directory"
+        api_url=https://api.github.com/repos/owner/project/pulls
+        fixture_merge=1111111111111111111111111111111111111111
+        : >"$temporary_directory/requests"
+        : >"$temporary_directory/sleeps"
+        sleep() { printf '%s\n' "$1" >>"$temporary_directory/sleeps"; }
+        curl() {
+            local url='' output='' header='' seen=false count
+            while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                    --output) output="$2"; shift ;;
+                    --header)
+                        [[ "$2" == 'Cache-Control: no-cache' ]] && header=yes
+                        shift ;;
+                    https://*) url="$1" ;;
+                esac
+                shift
+            done
+            [[ "$header" == yes && -n "$output" && -n "$url" ]] || return 1
+            if /usr/bin/grep -Fqx "$url" "$temporary_directory/requests"; then seen=true; fi
+            printf '%s\n' "$url" >>"$temporary_directory/requests"
+            count=$(wc -l <"$temporary_directory/requests")
+            if [[ "$scenario" == offline ]]; then return 7; fi
+            if [[ "$scenario" == invalid-json ]]; then printf '{' >"$output"; return; fi
+            local state=open mergeable=true sha="$fixture_merge"
+            case "$scenario" in
+                pending-ready) [[ "$count" -eq 1 || "$seen" == true ]] && mergeable=null ;;
+                pending-exhausted) mergeable=null ;;
+                conflict) mergeable=false ;;
+                closed) state=closed ;;
+                invalid-hash) sha=invalid ;;
+            esac
+            printf '{"state":"%s","mergeable":%s,"merge_commit_sha":"%s"}\n' \
+                "$state" "$mergeable" "$sha" >"$output"
+        }
+        if [[ "$scenario" == pending-ready ]]; then
+            resolve_test_merge >"$temporary_directory/output"
+            assert_equal "$merge_commit" "$fixture_merge"
+            assert_equal "$(wc -l <"$temporary_directory/requests" | tr -d ' ')" 2
+            assert_equal "$(cat "$temporary_directory/sleeps")" 2
+        else
+            if (resolve_test_merge >"$temporary_directory/output" 2>&1); then exit 1; fi
+            case "$scenario" in
+                pending-exhausted)
+                    assert_equal "$(wc -l <"$temporary_directory/requests" | tr -d ' ')" 5
+                    assert_equal "$(wc -l <"$temporary_directory/sleeps" | tr -d ' ')" 4
+                    expected='has not finished computing' ;;
+                conflict) expected='Resolve its conflicts' ;;
+                closed) expected='no longer open' ;;
+                invalid-hash) expected='valid test merge commit' ;;
+                offline) expected='GitHub is unreachable' ;;
+                invalid-json) expected='invalid PR data' ;;
+            esac
+            /usr/bin/grep -q "$expected" "$temporary_directory/output"
+        fi
+    )
+    printf 'PASS fresh merge polling: %s\n' "$scenario"
+done
 
 # Empty input accepts only the explicit yes default; EOF never grants consent.
 ask_yes_no 'Default yes' yes <<< '' >/dev/null

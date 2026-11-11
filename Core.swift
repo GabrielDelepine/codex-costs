@@ -32,6 +32,32 @@ struct Catalog: Decodable {
         return result
     }
 }
+// Successful downloads keep the six-hour cadence; failures use a shorter, capped backoff.
+struct PricingRefreshSchedule {
+    static let refreshInterval: TimeInterval = 6 * 3600
+    private(set) var lastAttempt: Date?
+    private(set) var retryAt: Date?
+    private var failures = 0
+
+    func isDue(at now: Date, lastSuccess: Date?, hasCatalog: Bool) -> Bool {
+        if let retryAt {
+            return now >= retryAt
+        }
+        return !hasCatalog || now.timeIntervalSince(lastSuccess ?? .distantPast) >= Self.refreshInterval
+    }
+    mutating func networkRestored(at now: Date) {
+        guard let retryAt else { return }
+        // Remember an early reconnect so the recovery tick retries after the cooldown.
+        self.retryAt = min(retryAt, max(now, (lastAttempt ?? .distantPast).addingTimeInterval(60)))
+    }
+    mutating func started(at now: Date) { lastAttempt = now }
+    mutating func succeeded() { failures = 0; retryAt = nil }
+    mutating func failed(at now: Date) {
+        let delays: [TimeInterval] = [60, 5 * 60, 15 * 60, 3600]
+        retryAt = now.addingTimeInterval(delays[min(failures, delays.count - 1)])
+        failures = min(failures + 1, delays.count - 1)
+    }
+}
 enum Failure: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }

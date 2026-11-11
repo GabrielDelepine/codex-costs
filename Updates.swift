@@ -55,16 +55,18 @@ struct GitHubRelease: Codable {
     let currentVersion: String
     private let defaults: UserDefaults
     private let session: URLSession
+    private let network: NetworkRequests
     private var lastAttempt: Date?
     private let api = "https://api.github.com/repos/GabrielDelepine/codex-costs/releases"
     private let latestKey = "latestAppRelease"
     private var currentKey: String { "appRelease-" + currentVersion }
 
     init(currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
-         defaults: UserDefaults = .standard, session: URLSession = .shared) {
+         defaults: UserDefaults = .standard, session: URLSession = .shared, network: NetworkRequests? = nil) {
         self.currentVersion = currentVersion
         self.defaults = defaults
         self.session = session
+        self.network = network ?? .shared
         automaticallyChecks = defaults.object(forKey: "automaticallyCheckForReleases") as? Bool ?? true
         if let data = defaults.data(forKey: latestKey) { latest = try? GitHubRelease.decode(data) }
         if let data = defaults.data(forKey: currentKey), let release = try? GitHubRelease.decode(data),
@@ -89,7 +91,7 @@ struct GitHubRelease: Codable {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Codex-Costs", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await network.data(for: request, session: session)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 404 { return nil }
         guard http.statusCode == 200 else { throw URLError(.badServerResponse) }

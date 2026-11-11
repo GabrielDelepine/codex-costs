@@ -10,20 +10,10 @@ repository="GabrielDelepine/codex-costs"
 repository_url="https://github.com/$repository"
 api_url="https://api.github.com/repos/$repository/pulls"
 
-# Use the terminal's own palette so both light and dark themes stay legible.
-bold='' reset='' cyan='' green='' yellow='' red=''
-if [[ -t 1 && -t 2 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
-    bold=$'\033[1m'
-    reset=$'\033[0m'
-    cyan=$'\033[36m'
-    green=$'\033[32m'
-    yellow=$'\033[33m'
-    red=$'\033[31m'
-fi
-
-section() {
-    printf '\n  %s%s%s%s\n' "$bold" "$cyan" "$1" "$reset"
-}
+# Shared app launch and network simulation controls.
+launch_target=pr
+launch_script=pull-request.sh
+source "$project_directory/scripts/app-launch.sh"
 
 # Keep successful tool output quiet; show indented diagnostics on failure.
 run_quietly() {
@@ -36,11 +26,6 @@ run_quietly() {
 
     sed 's/^/    /' "$temporary_directory/command.log" >&2
     fail "$error_message"
-}
-
-fail() {
-    printf '\n    %s✕ Test stopped%s\n    %s\n\n' "$red$bold" "$reset" "$*" >&2
-    exit 1
 }
 
 # Bound authenticated network commands without changing user configuration.
@@ -513,6 +498,7 @@ fetch_json() {
     if ! curl --disable --fail --silent --show-error --location \
         --connect-timeout 10 --max-time 30 \
         --header 'Accept: application/vnd.github+json' \
+        --header 'Cache-Control: no-cache' \
         "$1" --output "$temporary_directory/response.json"; then
         fail "GitHub is unreachable or its anonymous request limit has been reached. Try again later; no token is required."
     fi
@@ -545,10 +531,38 @@ function run(arguments) {
 JAVASCRIPT
 }
 
+# GitHub can cache a pending response for 60 seconds, longer than this poll loop.
+# Use a distinct URL for every attempt and run before trusting the merge ref.
+resolve_test_merge() {
+    local attempt request_id
+    request_id=$(basename "$temporary_directory")
+    merge_commit=pending
+    for attempt in 1 2 3 4 5; do
+        fetch_json "$api_url/$pull_number?merge_check=$request_id-$attempt"
+        if ! merge_commit=$(parse_response detail); then
+            fail "GitHub returned invalid PR data. Try again shortly."
+        fi
+        [[ "$merge_commit" == pending ]] || break
+        printf '    GitHub is preparing the test merge (%s/5)…\n' "$attempt"
+        if [[ "$attempt" -lt 5 ]]; then sleep 2; fi
+    done
+    case "$merge_commit" in
+        closed) fail "This PR is no longer open." ;;
+        pending) fail "GitHub has not finished computing the test merge. Try again shortly." ;;
+        conflict) fail "GitHub cannot merge this PR automatically. Resolve its conflicts before testing." ;;
+    esac
+    [[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub did not provide a valid test merge commit."
+}
+
+# Start the interactive workflow.
+parse_arguments "$@"
+
 printf '\n  %s%sCODEX COSTS%s  /  PR test\n' "$bold" "$cyan" "$reset"
 printf '    Build and run a PR\n'
 printf '    (The PR will be tested as merged with its target branch so you can check\n'
 printf '    that the combined app works before merging it on GitHub.)\n'
+
+show_network_testing
 
 section 'How it works'
 printf '    %s1%s  Choose an open PR.\n' "$cyan" "$reset"
@@ -642,21 +656,7 @@ printf '    Later changes to the target branch or the PR can change the result.\
 printf '    PRs with merge conflicts cannot be tested until those conflicts are resolved.\n'
 printf '    Publishing feedback and merging require separate choices after the test.\n'
 
-# Request fresh mergeability before trusting GitHub's synthetic merge ref.
-merge_commit=pending
-for attempt in 1 2 3 4 5; do
-    fetch_json "$api_url/$pull_number"
-    merge_commit=$(parse_response detail)
-    [[ "$merge_commit" == pending ]] || break
-    printf '    GitHub is preparing the test merge (%s/5)…\n' "$attempt"
-    sleep 2
-done
-case "$merge_commit" in
-    closed) fail "This PR is no longer open." ;;
-    pending) fail "GitHub has not finished computing the test merge. Try again shortly." ;;
-    conflict) fail "GitHub cannot merge this PR automatically. Resolve its conflicts before testing." ;;
-esac
-[[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub did not provide a valid test merge commit."
+resolve_test_merge
 
 # A private ref and --no-write-fetch-head avoid disturbing another session's
 # FETCH_HEAD. Never change origin or fetch into a local working branch.
@@ -684,32 +684,13 @@ run_quietly "Could not remove the test worktree; it will be retained for inspect
     git worktree remove "$test_worktree"
 rmdir "$worktree_directory"
 
-printf '\n    Quitting Codex Costs if it is already running…\n'
-# Checking running bundle identifiers avoids launching an app just to quit it.
-osascript <<'APPLESCRIPT'
-tell application "System Events"
-    set appIsRunning to exists (application processes whose bundle identifier is "ovh.pwa.codex-costs")
-end tell
-if appIsRunning then
-    tell application id "ovh.pwa.codex-costs" to quit
-end if
-APPLESCRIPT
-
-for attempt in 1 2 3 4 5; do
-    if ! pgrep -x CodexCosts >/dev/null; then
-        break
-    fi
-    sleep 1
-done
-if pgrep -x CodexCosts >/dev/null; then
-    fail "The app did not quit. Quit it manually, then run the script again."
-fi
+quit_running_app
 
 printf '\n    The test app will open. Quit the app completely to return here.\n'
 printf '    Your terminal will wait; closing only the app window is not enough.\n'
 test_started=$(date +%s)
 app_may_be_running=true
-if ! open -n -W "$test_app"; then
+if ! launch_app "$test_app" -W; then
     fail "Could not confirm that the test app closed. Its files will be retained."
 fi
 app_may_be_running=false

@@ -2,6 +2,33 @@
 
 Run `make pr`, `make pull-request` or `./scripts/pull-request.sh` in a macOS terminal. Select a listed GitHub PR number, or `0` to cancel. Public API rate limits apply. Local testing needs no account, GitHub CLI or extra package. `NO_COLOR=1` disables styling.
 
+## Network simulations
+
+Hold Option while opening the **Codex Costs** menu to reveal **Network Testing**. Its two independent checkboxes affect both pricing downloads and release checks:
+
+- **Simulate Offline** overrides the network-path status and makes manual requests fail as offline. It takes precedence when both options are checked.
+- **Simulate 100% Packet Loss** reports an available path but sends no requests; requests wait for their normal timeout. This simulates application-visible behavior, not actual packet loss.
+
+Changing an option cancels in-flight work and reevaluates it under the new settings. Turning off packet loss allows a waiting request to proceed. Turning off Offline restores the latest system path and uses the normal reconnection schedule; it does not force a download of still-current prices. The footer shows when simulation is active. Choices reset on each launch.
+
+Both `make pr` and `make run` show the network commands and selected mode at startup. Use `make run` to test the current checkout, or `make pr` to choose a PR:
+
+```sh
+make pr
+OFFLINE=1 make pr
+PACKET_LOSS=1 make pr
+
+make run
+OFFLINE=1 make run
+PACKET_LOSS=1 make run
+```
+
+`PACKET_LOSS=1` means 100% simulated loss. Combine both with `OFFLINE=1 PACKET_LOSS=1 make pr`; Offline takes precedence. The same combinations work with `make run`. Values must be `0` or `1`. GitHub requests made by the script remain online.
+
+The short variables set the app's `CODEX_COSTS_SIMULATE_OFFLINE` and `CODEX_COSTS_SIMULATE_PACKET_LOSS` launch variables. The long names remain supported; an explicit short value overrides the corresponding long value. Without overrides, both simulations start disabled. Direct script flags `--offline` and `--packet-loss` also remain supported and enable their simulation regardless of environment values. Use `./scripts/pull-request.sh --help` for usage.
+
+`make run` builds before quitting any running Codex Costs instance and opening the new app with the selected variables. A build failure leaves the running app alone. It returns after launching; `make pr` waits for the app to quit before collecting feedback.
+
 ## Isolation and app lifecycle
 
 By default, the script tests GitHub's synthetic merge of the PR and its target branch, verifies the SHA and builds in a temporary detached worktree. An approved rebase instead tests the rewritten PR head. Your branch, local changes, untracked files, remote configuration and `FETCH_HEAD` stay unchanged. Worktrees share Git objects and metadata. **Only test trusted code:** the PR's build executes with your user permissions.
@@ -36,4 +63,6 @@ After an accepted rebase, or when the PR head was already prepared, the final qu
 
 Without a rebase, a separate confirmation lets you choose an enabled squash, merge or rebase method, or cancel. Permissions and readiness are rechecked. GitHub locks the operation to the tested PR head and enforces server protections; the target can still advance before processing because the merge API has no target-commit lock. The script does not enable auto-merge, enter a merge queue or delete branches.
 
-Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.
+Run `/bin/bash Tests/LaunchChecks.sh` to verify `make run` mode forwarding, startup help and build/quit/launch failures with mocked macOS commands.
+
+Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of simulation launch flags, fresh merge-status polling, prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.

@@ -3,6 +3,7 @@ import AppKit
 import Observation
 
 @MainActor @Observable final class Store {
+    let network = NetworkRequests.shared
     let releases = ReleaseUpdates()
     var range = DayRange.today
     var followToday = true
@@ -32,10 +33,15 @@ import Observation
     private var rescanPending = false
     private var running = false
     private var monitoring: Task<Void, Never>?
-    private var lastAttempt = Date.distantPast
+    private var pricingSchedule = PricingRefreshSchedule()
     private let cache = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CodexCosts/pricing.json")
     init() {
         if let data = try? Data(contentsOf: cache) { catalog = try? Catalog.decode(data) }
+        network.connectionRestored = { [weak self] in
+            guard let self else { return }
+            self.pricingSchedule.networkRestored(at: Date())
+            Task { await self.refreshPrices() }
+        }
     }
     func estimate(_ session: Session) -> Estimate {
         estimates[session.id] ?? .unavailable("Usage not processed yet")
@@ -59,25 +65,28 @@ import Observation
     func refreshPrices(force: Bool = false) async {
         guard !fetching else { return }
         let now = Date()
-        let lastSuccess = UserDefaults.standard.object(forKey: "lastDownload") as? Date ?? .distantPast
-        guard force || now.timeIntervalSince(max(lastAttempt, lastSuccess)) >= 6*3600 else { return }
-        lastAttempt = now; fetching = true
+        let lastSuccess = UserDefaults.standard.object(forKey: "lastDownload") as? Date
+        guard force || (network.available != false && pricingSchedule.isDue(
+            at: now, lastSuccess: lastSuccess, hasCatalog: catalog != nil)) else { return }
+        pricingSchedule.started(at: now); fetching = true
         defer { fetching = false }
         do {
             var request = URLRequest(url: URL(string: "https://tools.pwa.ovh/api/v1/openai-pricing")!)
             request.timeoutInterval = 20
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await network.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw Failure.message("Invalid HTTP response") }
             let fresh = try Catalog.decode(data)
             try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: cache, options: .atomic)
             catalog = fresh; updateEstimates()
-            UserDefaults.standard.set(now, forKey: "lastDownload")
+            UserDefaults.standard.set(Date(), forKey: "lastDownload")
+            pricingSchedule.succeeded()
             networkStatus = ""
         } catch {
-            // Avoid leaking localized French OS/network errors into the English UI.
-            networkStatus = catalog == nil ? "Pricing update failed. No saved prices available." : "Pricing update failed. Last downloaded prices retained."
+            pricingSchedule.failed(at: Date())
+            // Cached prices remain usable; their source retrieval date stays visible.
+            networkStatus = catalog == nil ? "Estimates unavailable until prices can be downloaded. Retrying automatically." : ""
         }
     }
     func scan() async {
@@ -160,11 +169,13 @@ import Observation
         let wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.wake() }
         }
+        network.startMonitoring()
         updateWindowVisibility()
         if watcher == nil { configureWatcher() }
         defer {
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            network.stopMonitoring()
             watcher = nil; watching = false; running = false
         }
         await scan()
@@ -195,6 +206,17 @@ import Observation
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Codex Costs") { openWindow(id: "about") }
+                    .modifierKeyAlternate(.option) {
+                        Button("About Codex Costs") { openWindow(id: "about") }
+                        Menu("Network Testing") {
+                            Toggle("Simulate Offline", isOn: Binding(
+                                get: { store.network.simulateOffline },
+                                set: { store.network.simulateOffline = $0 }))
+                            Toggle("Simulate 100% Packet Loss", isOn: Binding(
+                                get: { store.network.simulatePacketLoss },
+                                set: { store.network.simulatePacketLoss = $0 }))
+                        }
+                    }
                 Button(store.releases.checking ? "Checking for Updates…" : "Check for Updates…") {
                     openWindow(id: "updates")
                     Task { await store.releases.check(manual: true) }
@@ -433,6 +455,7 @@ struct MainView: View {
                 }
                 Text("Estimate convention: total input per request, including cached tokens, determines the context tier; selected rates apply to the entire request. These rules remain unverified by the endpoint.").foregroundStyle(.secondary)
                 Text("Excludes tools, subagents and surcharges. Total excludes unavailable estimates. Logs stay on your Mac.").foregroundStyle(.secondary)
+                if !store.network.simulationStatus.isEmpty { Text(store.network.simulationStatus).foregroundStyle(.secondary) }
                 if !store.networkStatus.isEmpty { Text(store.networkStatus).foregroundStyle(.orange) }
                 if !store.logStatus.isEmpty { Text(store.logStatus).foregroundStyle(.orange).textSelection(.enabled) }
             }.font(.caption).padding(14)

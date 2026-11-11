@@ -3,13 +3,13 @@
 build:
 	./build.sh
 
-run: build
-	open "build/Codex Costs.app"
+run:
+	./scripts/run.sh $(ARGS)
 
 pr: pull-request
 
 pull-request:
-	./scripts/pull-request.sh
+	./scripts/pull-request.sh $(ARGS)
 
 release:
 	./scripts/release.sh
