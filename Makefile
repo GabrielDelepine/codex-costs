@@ -9,7 +9,7 @@ run: build
 pr: pull-request
 
 pull-request:
-	./scripts/pull-request.sh
+	./scripts/pull-request.sh $(ARGS)
 
 release:
 	./scripts/release.sh

@@ -12,7 +12,7 @@ Pick a day or date range, compare conversations, and open the info panel for tok
 
 ## Download and install
 
-Requires macOS 14 Sonoma or later, Apple Silicon or Intel, and Codex logs in the default `~/.codex` directory.
+Requires macOS 15 Sequoia or later, Apple Silicon or Intel, and Codex logs in the default `~/.codex` directory.
 
 1. Download the `.dmg` application asset from [Releases](https://github.com/GabrielDelepine/codex-costs/releases). The automatic source archives are not compiled apps.
 2. Open the disk image and drag **Codex Costs.app** to **Applications**.
@@ -158,7 +158,7 @@ Focused release-update checks are described in the [runtime guide](docs/agents/r
 
 Run `make pr` (or `make pull-request`) in a macOS terminal and enter a listed PR number. Testing uses a temporary worktree and leaves your checkout unchanged. For PRs containing only your commits, you can approve a signed rebase that adds the PR number to commit titles and rewrites the remote PR branch with `--force-with-lease`. Only test code you trust: the PR's build runs with your user permissions. The script quits a running Codex Costs instance; the test app may share its preferences.
 
-Quit the test app completely to return to the terminal. Publishing results or screenshots and merging each require explicit choices. Failed tests never offer merging. See the [testing guide](docs/pull-request-testing.md) for requirements, privacy precautions and recovery details.
+Quit the test app completely to return to the terminal. Publishing results or screenshots and merging each require explicit choices. Failed tests never offer merging. Hold Option in the app menu to reveal network simulations, or start with `make pr ARGS="--offline"` or `make pr ARGS="--packet-loss"`. See the [testing guide](docs/pull-request-testing.md) for startup flags, requirements, privacy precautions and recovery details.
 
 ## License
 

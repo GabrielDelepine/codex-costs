@@ -43,6 +43,40 @@ fail() {
     exit 1
 }
 
+usage() {
+    cat <<'HELP'
+Usage: ./scripts/pull-request.sh [--offline] [--packet-loss]
+       make pr ARGS="--offline"
+       make pr ARGS="--packet-loss"
+
+  --offline      Start the app with Simulate Offline enabled.
+  --packet-loss  Start the app with Simulate 100% Packet Loss enabled.
+  --help, -h     Show this help without contacting GitHub or launching the app.
+
+Flags can be combined; Offline takes precedence. GitHub access stays online.
+Make does not accept custom flags directly; pass them through ARGS.
+HELP
+}
+
+parse_arguments() {
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --offline) CODEX_COSTS_SIMULATE_OFFLINE=1 ;;
+            --packet-loss) CODEX_COSTS_SIMULATE_PACKET_LOSS=1 ;;
+            --help|-h) usage; exit 0 ;;
+            *) fail "Unknown option: $1. Run ./scripts/pull-request.sh --help for usage." ;;
+        esac
+        shift
+    done
+}
+
+launch_test_app() {
+    open -n -W \
+        --env "CODEX_COSTS_SIMULATE_OFFLINE=${CODEX_COSTS_SIMULATE_OFFLINE:-0}" \
+        --env "CODEX_COSTS_SIMULATE_PACKET_LOSS=${CODEX_COSTS_SIMULATE_PACKET_LOSS:-0}" \
+        "$test_app"
+}
+
 # Bound authenticated network commands without changing user configuration.
 run_with_timeout() (
     "$@" &
@@ -569,6 +603,9 @@ resolve_test_merge() {
     [[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub did not provide a valid test merge commit."
 }
 
+# Start the interactive workflow.
+parse_arguments "$@"
+
 printf '\n  %s%sCODEX COSTS%s  /  PR test\n' "$bold" "$cyan" "$reset"
 printf '    Build and run a PR\n'
 printf '    (The PR will be tested as merged with its target branch so you can check\n'
@@ -719,7 +756,7 @@ printf '\n    The test app will open. Quit the app completely to return here.\n'
 printf '    Your terminal will wait; closing only the app window is not enough.\n'
 test_started=$(date +%s)
 app_may_be_running=true
-if ! open -n -W "$test_app"; then
+if ! launch_test_app; then
     fail "Could not confirm that the test app closed. Its files will be retained."
 fi
 app_may_be_running=false

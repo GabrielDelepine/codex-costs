@@ -7,7 +7,7 @@ trap 'rm -rf "$checks_directory"' EXIT
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_TERMINAL_PROMPT=0
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL || true
-sed -n '/^# Use the terminal/,/^printf .*CODEX COSTS/{ /^printf .*CODEX COSTS/d; p; }' \
+sed -n '/^# Use the terminal/,/^# Start the interactive workflow/{ /^# Start the interactive workflow/d; p; }' \
     "$project_directory/scripts/pull-request.sh" >"$checks_directory/functions.sh"
 source "$checks_directory/functions.sh"
 ssh-keygen -q -t ed25519 -N '' -f "$checks_directory/signing-key"
@@ -22,6 +22,42 @@ assert_equal() {
         exit 1
     fi
 }
+
+# Check the launch boundary without opening an app or contacting GitHub.
+for scenario in normal offline packet-loss both inherited override; do
+    (
+        unset CODEX_COSTS_SIMULATE_OFFLINE CODEX_COSTS_SIMULATE_PACKET_LOSS || true
+        expected_offline=0
+        expected_loss=0
+        case "$scenario" in
+            normal) parse_arguments ;;
+            offline) parse_arguments --offline; expected_offline=1 ;;
+            packet-loss) parse_arguments --packet-loss; expected_loss=1 ;;
+            both) parse_arguments --packet-loss --offline; expected_offline=1; expected_loss=1 ;;
+            inherited)
+                CODEX_COSTS_SIMULATE_PACKET_LOSS=1
+                parse_arguments --offline
+                expected_offline=1; expected_loss=1 ;;
+            override)
+                CODEX_COSTS_SIMULATE_OFFLINE=0
+                parse_arguments --offline --offline
+                expected_offline=1 ;;
+        esac
+        test_app="$checks_directory/App with spaces.app"
+        open() { printf '%s\n' "$@" >"$checks_directory/launch-arguments"; }
+        launch_test_app
+        assert_equal "$(cat "$checks_directory/launch-arguments")" \
+            "$(printf '%s\n' -n -W --env "CODEX_COSTS_SIMULATE_OFFLINE=$expected_offline" \
+                --env "CODEX_COSTS_SIMULATE_PACKET_LOSS=$expected_loss" "$test_app")"
+    )
+    printf 'PASS simulation launch flags: %s\n' "$scenario"
+done
+
+make -s -C "$project_directory" pr ARGS=--help >"$checks_directory/help"
+/usr/bin/grep -q -- '--packet-loss' "$checks_directory/help"
+if /bin/bash "$project_directory/scripts/pull-request.sh" --unknown >"$checks_directory/invalid" 2>&1; then exit 1; fi
+/usr/bin/grep -q 'Unknown option: --unknown' "$checks_directory/invalid"
+printf 'PASS make argument forwarding, help and invalid-option handling\n'
 
 setup_fixture() {
     fixture_directory="$checks_directory/$1"

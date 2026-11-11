@@ -2,6 +2,26 @@
 
 Run `make pr`, `make pull-request` or `./scripts/pull-request.sh` in a macOS terminal. Select a listed GitHub PR number, or `0` to cancel. Public API rate limits apply. Local testing needs no account, GitHub CLI or extra package. `NO_COLOR=1` disables styling.
 
+## Network simulations
+
+Hold Option while opening the **Codex Costs** menu to reveal **Network Testing**. Its two independent checkboxes affect both pricing downloads and release checks:
+
+- **Simulate Offline** overrides the network-path status and makes manual requests fail as offline. It takes precedence when both options are checked.
+- **Simulate 100% Packet Loss** reports an available path but sends no requests; requests wait for their normal timeout. This simulates application-visible behavior, not actual packet loss.
+
+Changing an option cancels in-flight work and reevaluates it under the new settings. Turning off packet loss allows a waiting request to proceed. Turning off Offline restores the latest system path and uses the normal reconnection schedule; it does not force a download of still-current prices. The footer shows when simulation is active. Choices reset on each launch.
+
+To start a PR test with either option enabled, use the updated test script:
+
+```sh
+make pr ARGS="--offline"
+make pr ARGS="--packet-loss"
+```
+
+`--packet-loss` means 100% simulated loss. Combine both with `ARGS="--offline --packet-loss"`; Offline takes precedence. Make rejects custom options such as `make pr --offline`, so pass script flags through `ARGS`. Direct invocation also works: `./scripts/pull-request.sh --offline`.
+
+The flags set `CODEX_COSTS_SIMULATE_OFFLINE=1` and `CODEX_COSTS_SIMULATE_PACKET_LOSS=1` for the launched app. Setting those environment variables directly still works. GitHub requests made by the script remain online. Without flags or environment overrides, both simulations start disabled. Use `make pr ARGS="--help"` for usage.
+
 ## Isolation and app lifecycle
 
 By default, the script tests GitHub's synthetic merge of the PR and its target branch, verifies the SHA and builds in a temporary detached worktree. An approved rebase instead tests the rewritten PR head. Your branch, local changes, untracked files, remote configuration and `FETCH_HEAD` stay unchanged. Worktrees share Git objects and metadata. **Only test trusted code:** the PR's build executes with your user permissions.
@@ -36,4 +56,4 @@ After an accepted rebase, or when the PR head was already prepared, the final qu
 
 Without a rebase, a separate confirmation lets you choose an enabled squash, merge or rebase method, or cancel. Permissions and readiness are rechecked. GitHub locks the operation to the tested PR head and enforces server protections; the target can still advance before processing because the merge API has no target-commit lock. The script does not enable auto-merge, enter a merge queue or delete branches.
 
-Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of fresh merge-status polling, prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.
+Run `/bin/bash Tests/PullRequestChecks.sh` for isolated checks of simulation launch flags, fresh merge-status polling, prompt defaults, signed rebases, commit messages, ownership checks, failure handling and local fast-forward pushes. The fixtures use temporary signing keys and repositories and never contact GitHub or launch the app.

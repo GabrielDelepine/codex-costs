@@ -1,9 +1,9 @@
 import SwiftUI
 import AppKit
 import Observation
-import Network
 
 @MainActor @Observable final class Store {
+    let network = NetworkRequests.shared
     let releases = ReleaseUpdates()
     var range = DayRange.today
     var followToday = true
@@ -34,11 +34,14 @@ import Network
     private var running = false
     private var monitoring: Task<Void, Never>?
     private var pricingSchedule = PricingRefreshSchedule()
-    private var networkAvailable: Bool?
-    private let networkMonitor = NWPathMonitor()
     private let cache = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CodexCosts/pricing.json")
     init() {
         if let data = try? Data(contentsOf: cache) { catalog = try? Catalog.decode(data) }
+        network.connectionRestored = { [weak self] in
+            guard let self else { return }
+            self.pricingSchedule.networkRestored(at: Date())
+            Task { await self.refreshPrices() }
+        }
     }
     func estimate(_ session: Session) -> Estimate {
         estimates[session.id] ?? .unavailable("Usage not processed yet")
@@ -63,7 +66,7 @@ import Network
         guard !fetching else { return }
         let now = Date()
         let lastSuccess = UserDefaults.standard.object(forKey: "lastDownload") as? Date
-        guard force || (networkAvailable != false && pricingSchedule.isDue(
+        guard force || (network.available != false && pricingSchedule.isDue(
             at: now, lastSuccess: lastSuccess, hasCatalog: catalog != nil)) else { return }
         pricingSchedule.started(at: now); fetching = true
         defer { fetching = false }
@@ -71,7 +74,7 @@ import Network
             var request = URLRequest(url: URL(string: "https://tools.pwa.ovh/api/v1/openai-pricing")!)
             request.timeoutInterval = 20
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await network.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw Failure.message("Invalid HTTP response") }
             let fresh = try Catalog.decode(data)
             try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -166,26 +169,13 @@ import Network
         let wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.wake() }
         }
-        networkMonitor.pathUpdateHandler = { [weak self] path in
-            // A usable route is a retry signal, not proof that the pricing server is reachable.
-            let available = path.status != .unsatisfied
-            Task { @MainActor [weak self] in
-                guard let self, self.running else { return }
-                let reconnected = self.networkAvailable == false && available
-                self.networkAvailable = available
-                if reconnected {
-                    self.pricingSchedule.networkRestored(at: Date())
-                    await self.refreshPrices()
-                }
-            }
-        }
-        networkMonitor.start(queue: DispatchQueue(label: "CodexCosts.pricing-network"))
+        network.startMonitoring()
         updateWindowVisibility()
         if watcher == nil { configureWatcher() }
         defer {
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
-            networkMonitor.cancel()
+            network.stopMonitoring()
             watcher = nil; watching = false; running = false
         }
         await scan()
@@ -216,6 +206,17 @@ import Network
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Codex Costs") { openWindow(id: "about") }
+                    .modifierKeyAlternate(.option) {
+                        Button("About Codex Costs") { openWindow(id: "about") }
+                        Menu("Network Testing") {
+                            Toggle("Simulate Offline", isOn: Binding(
+                                get: { store.network.simulateOffline },
+                                set: { store.network.simulateOffline = $0 }))
+                            Toggle("Simulate 100% Packet Loss", isOn: Binding(
+                                get: { store.network.simulatePacketLoss },
+                                set: { store.network.simulatePacketLoss = $0 }))
+                        }
+                    }
                 Button(store.releases.checking ? "Checking for Updates…" : "Check for Updates…") {
                     openWindow(id: "updates")
                     Task { await store.releases.check(manual: true) }
@@ -454,6 +455,7 @@ struct MainView: View {
                 }
                 Text("Estimate convention: total input per request, including cached tokens, determines the context tier; selected rates apply to the entire request. These rules remain unverified by the endpoint.").foregroundStyle(.secondary)
                 Text("Excludes tools, subagents and surcharges. Total excludes unavailable estimates. Logs stay on your Mac.").foregroundStyle(.secondary)
+                if !store.network.simulationStatus.isEmpty { Text(store.network.simulationStatus).foregroundStyle(.secondary) }
                 if !store.networkStatus.isEmpty { Text(store.networkStatus).foregroundStyle(.orange) }
                 if !store.logStatus.isEmpty { Text(store.logStatus).foregroundStyle(.orange).textSelection(.enabled) }
             }.font(.caption).padding(14)

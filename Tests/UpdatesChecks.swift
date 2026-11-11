@@ -100,6 +100,16 @@ final class ReleaseStub: URLProtocol {
         let unsupported = ReleaseUpdates(currentVersion: "", defaults: defaults, session: session)
         await unsupported.check(manual: true)
         precondition(unsupported.phase == .unsupported)
+        let network = NetworkRequests(environment: [:])
+        let simulated = ReleaseUpdates(currentVersion: "1.1.0", defaults: defaults, session: session, network: network)
+        let beforeOffline = ReleaseStub.paths.count
+        network.simulateOffline = true
+        await simulated.check(manual: true)
+        precondition(simulated.phase == .failed && ReleaseStub.paths.count == beforeOffline)
+        network.simulateOffline = false
+        ReleaseStub.responses[prefix + "/latest"] = (200, release("1.1.0"))
+        await simulated.check(manual: true)
+        precondition(simulated.phase == .current && ReleaseStub.paths.count > beforeOffline)
         print("Release update checks passed (synthetic HTTP responses and isolated preferences).")
     }
 }
